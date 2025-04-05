@@ -132,19 +132,23 @@ class Animation(abc.ABC):
             bool: True if the animation is still running, False if finished
         """
         if not self.is_running:
+            print("Animation not running")
             return False
             
         # Throttle frame rate and get elapsed time
         dt = self.throttle_frame_rate()
+        print(f"Frame dt: {dt:.4f}s")
         
         # Update animation state
         self.update(dt)
         
         # Render to display
         self.render()
+        print("Frame rendered")
         
         # Check if animation is finished
         if self.is_finished():
+            print("Animation finished")
             self.cleanup()
             return False
             
