@@ -65,8 +65,8 @@ def parse_arguments():
     parser.add_argument('--config', '-c', type=str, default='config/animations.json',
                         help='Path to animation configuration file')
     
-    parser.add_argument('--brightness', '-b', type=float, default=0.5,
-                        help='Display brightness (0.0-1.0, default: 0.5)')
+    parser.add_argument('--brightness', '-b', type=float, default=0.8,
+                        help='Display brightness (0.0-1.0, default: 0.8)')
     
     parser.add_argument('--list', '-l', action='store_true',
                         help='List available animations and exit')
