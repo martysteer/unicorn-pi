@@ -13,6 +13,8 @@ Available sequences:
 - Y, Y, Y, Y: Triggers a rainbow wave animation
 
 Press and hold any button to show the help screen with available sequences.
+
+Run with --animation flag to cycle through animations with any button press.
 """
 
 import time
@@ -55,14 +57,17 @@ def parse_arguments():
                        help='Display brightness from 0.0 to 1.0 (default: 0.5)')
     parser.add_argument('--duration', '-d', type=float, default=3.0,
                        help='Animation duration in seconds (default: 3.0)')
+    parser.add_argument('--animation', '-a', action='store_true',
+                       help='Animation mode: press any button to cycle through animations')
     return parser.parse_args()
 
 
 class SequenceCommander:
-    def __init__(self, display, animation_duration=3.0):
+    def __init__(self, display, animation_duration=3.0, animation_mode=False):
         self.display = display
         self.width, self.height = display.get_shape()
         self.animation_duration = animation_duration
+        self.animation_mode = animation_mode
         
         # Define button names and pins
         self.buttons = {
@@ -81,6 +86,16 @@ class SequenceCommander:
             "YYYY": self.rainbow_wave_animation
         }
         
+        # Create a list of all animations for animation mode
+        self.animations = [
+            self.spiral_animation,
+            self.rain_animation,
+            self.explosion_animation,
+            self.snake_animation, 
+            self.rainbow_wave_animation
+        ]
+        self.current_animation_index = 0
+        
         # Current input sequence
         self.current_sequence = ""
         self.sequence_timeout = None
@@ -91,8 +106,14 @@ class SequenceCommander:
         self.button_press_times = {pin: 0 for pin in self.buttons.values()}
         
         # Animation state
-        self.current_animation = None
-        self.animation_start_time = None
+        if self.animation_mode:
+            # Start with the first animation in animation mode
+            self.current_animation = self.animations[self.current_animation_index]
+            self.animation_start_time = time.time()
+            print(f"Starting in animation mode with animation 1/{len(self.animations)}")
+        else:
+            self.current_animation = None
+            self.animation_start_time = None
         
         # Snake animation state
         self.snake_body = []
@@ -102,6 +123,7 @@ class SequenceCommander:
     def process_buttons(self):
         """Process button inputs and detect sequences."""
         long_press_detected = False
+        button_handled = False
         
         for button_name, pin in self.buttons.items():
             # Get previous and current button state
@@ -123,25 +145,38 @@ class SequenceCommander:
                 if prev_state and not curr_state:  # Button was just released
                     press_duration = time.time() - self.button_press_times[pin]
                     if press_duration < 1.0:  # Short press
-                        # Add to current sequence
-                        self.current_sequence += button_name
-                        print(f"Button {button_name} pressed - Current sequence: {self.current_sequence}")
-                        
-                        # Set timeout to clear the sequence if no new button is pressed
-                        self.sequence_timeout = time.time() + self.sequence_timeout_duration
-                        
-                        # Check if the current sequence matches any known sequence
-                        for seq, animation_func in self.sequences.items():
-                            if self.current_sequence.endswith(seq):
-                                print(f"Sequence {seq} recognized! Triggering animation.")
-                                self.trigger_animation(animation_func)
-                                self.current_sequence = ""
-                                self.sequence_timeout = None
-                                break
+                        if self.animation_mode:
+                            # In animation mode, any button press advances to next animation
+                            self.current_animation_index = (self.current_animation_index + 1) % len(self.animations)
+                            anim_func = self.animations[self.current_animation_index]
+                            print(f"Button {button_name} pressed - switching to animation {self.current_animation_index + 1}/{len(self.animations)}")
+                            self.trigger_animation(anim_func)
+                            button_handled = True
+                            break  # Exit loop once we've handled a button
+                        else:
+                            # Add to current sequence in sequence mode
+                            self.current_sequence += button_name
+                            print(f"Button {button_name} pressed - Current sequence: {self.current_sequence}")
+                            
+                            # Set timeout to clear the sequence if no new button is pressed
+                            self.sequence_timeout = time.time() + self.sequence_timeout_duration
+                            
+                            # Check if the current sequence matches any known sequence
+                            for seq, animation_func in self.sequences.items():
+                                if self.current_sequence.endswith(seq):
+                                    print(f"Sequence {seq} recognized! Triggering animation.")
+                                    self.trigger_animation(animation_func)
+                                    self.current_sequence = ""
+                                    self.sequence_timeout = None
+                                    break
                 
                 # Reset button timer on release
                 self.button_press_times[pin] = 0
         
+        # Skip sequence timeout check in animation mode if we handled a button
+        if self.animation_mode and button_handled:
+            return
+            
         # Check for sequence timeout
         if self.sequence_timeout and time.time() > self.sequence_timeout:
             print(f"Sequence timeout - resetting sequence: {self.current_sequence}")
@@ -176,32 +211,56 @@ class SequenceCommander:
         self.display.show()
         time.sleep(1.0)
         
-        # Then flash each sequence and corresponding animation briefly
-        for seq in self.sequences.keys():
-            # Show sequence as button lights
-            self.display.clear()
-            for i, char in enumerate(seq):
-                x = 3 + i * 4
-                y = 3
-                color = {
-                    'A': (255, 0, 0),    # Red
-                    'B': (0, 255, 0),    # Green
-                    'X': (0, 0, 255),    # Blue
-                    'Y': (255, 255, 0)   # Yellow
-                }.get(char, (255, 255, 255))
+        if self.animation_mode:
+            # In animation mode, show animation names
+            animation_names = ["Spiral", "Rain", "Explosion", "Snake", "Rainbow"]
+            for i, name in enumerate(animation_names):
+                self.display.clear()
+                # Flash a number for each animation
+                number = i + 1
+                x = self.width // 2
+                y = self.height // 2
                 
-                # Draw a 3x3 block for the button
+                # Draw a number in the center
+                color = (255, 255, 255)
                 for dx in range(-1, 2):
                     for dy in range(-1, 2):
                         nx, ny = x + dx, y + dy
                         if 0 <= nx < self.width and 0 <= ny < self.height:
                             self.display.set_pixel(nx, ny, *color)
+                
+                self.display.show()
+                time.sleep(0.75)
+        else:
+            # In sequence mode, show the sequences
+            for seq in self.sequences.keys():
+                # Show sequence as button lights
+                self.display.clear()
+                for i, char in enumerate(seq):
+                    x = 3 + i * 4
+                    y = 3
+                    color = {
+                        'A': (255, 0, 0),    # Red
+                        'B': (0, 255, 0),    # Green
+                        'X': (0, 0, 255),    # Blue
+                        'Y': (255, 255, 0)   # Yellow
+                    }.get(char, (255, 255, 255))
+                    
+                    # Draw a 3x3 block for the button
+                    for dx in range(-1, 2):
+                        for dy in range(-1, 2):
+                            nx, ny = x + dx, y + dy
+                            if 0 <= nx < self.width and 0 <= ny < self.height:
+                                self.display.set_pixel(nx, ny, *color)
+                
+                self.display.show()
+                time.sleep(0.75)
             
-            self.display.show()
-            time.sleep(0.75)
-            
-        # Return to standby pulse
-        self.current_animation = self.standby_pulse
+        # Return to standby pulse or current animation
+        if self.animation_mode:
+            self.current_animation = self.animations[self.current_animation_index]
+        else:
+            self.current_animation = self.standby_pulse
         self.animation_start_time = time.time()
     
     def trigger_animation(self, animation_func):
@@ -223,8 +282,16 @@ class SequenceCommander:
         # If an animation is running, check if it's finished
         if self.current_animation:
             if self.animation_start_time and time.time() - self.animation_start_time > self.animation_duration:
-                # Animation timed out, except for snake which continues until button press
-                if self.current_animation != self.snake_animation:
+                # Animation timed out
+                if self.animation_mode:
+                    # In animation mode, only auto-cycle if it's not the snake animation
+                    if self.current_animation != self.snake_animation:
+                        self.current_animation_index = (self.current_animation_index + 1) % len(self.animations)
+                        self.current_animation = self.animations[self.current_animation_index]
+                        self.animation_start_time = time.time()
+                        print(f"Auto-switching to animation {self.current_animation_index+1}/{len(self.animations)}")
+                elif self.current_animation != self.snake_animation:
+                    # In normal mode, return to standby pulse (except for snake)
                     self.current_animation = self.standby_pulse
                     self.animation_start_time = time.time()
             
@@ -523,11 +590,16 @@ def main():
     display.set_brightness(brightness)
     
     # Display startup message
-    display_info_message(display, "Sequence", "Commander")
+    if args.animation:
+        display_info_message(display, "Animation", "Mode")
+    else:
+        display_info_message(display, "Sequence", "Commander")
     time.sleep(1)
     
     # Create sequence commander
-    commander = SequenceCommander(display, animation_duration=args.duration)
+    commander = SequenceCommander(display, 
+                                 animation_duration=args.duration,
+                                 animation_mode=args.animation)
     
     try:
         # Main loop
