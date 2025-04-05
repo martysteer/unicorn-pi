@@ -131,6 +131,55 @@ def setup_button_handlers(sequencer, display):
     sequencer.register_button_handler(display.BUTTON_X, button_x_handler)
     sequencer.register_button_handler(display.BUTTON_Y, button_y_handler)
 
+def display_menu(display, options, selected_index):
+    """Display the menu on the Unicorn HAT Mini."""
+    display.clear()
+    
+    for i, option in enumerate(options):
+        if i == selected_index:
+            color = (255, 255, 255)  # White for selected option
+        else:
+            color = (128, 128, 128)  # Gray for unselected options
+        
+        # Draw a simple rectangle for each option
+        y = i * 2
+        display.set_pixel(0, y, *color)
+        display.set_pixel(0, y + 1, *color)
+        display.set_pixel(1, y, *color)
+        display.set_pixel(1, y + 1, *color)
+    
+    display.show()
+
+def run_menu(display, sequencer):
+    """Run the animation selection menu."""
+    options = get_animation_names()
+    selected_index = 0
+    
+    while True:
+        display_menu(display, options, selected_index)
+        
+        # Wait for button press
+        while True:
+            if display.read_button(display.BUTTON_A):
+                # Previous option
+                selected_index = (selected_index - 1) % len(options)
+                break
+            elif display.read_button(display.BUTTON_B):
+                # Next option
+                selected_index = (selected_index + 1) % len(options)
+                break
+            elif display.read_button(display.BUTTON_X):
+                # Run the selected animation
+                sequencer.jump_to(selected_index)
+                sequencer.start()
+                return
+            elif display.read_button(display.BUTTON_Y):
+                # Quit the menu
+                return
+            
+            time.sleep(0.1)
+
+
 
 def handle_button_presses(display, sequencer):
     """Handle button presses and pass them to the sequencer."""
@@ -210,7 +259,9 @@ def main():
     
     try:
         # Start the animation sequence
-        sequencer.start()
+        # sequencer.start()
+        # Show the animation selection menu
+        run_menu(display, sequencer)
         
         # Main loop
         while True:
