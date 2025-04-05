@@ -1,0 +1,51 @@
+{
+  "loop": true,
+  "shuffle": false,
+  "transition": "fade",
+  "transition_duration": 1.0,
+  "default_duration": 5.0,
+  "animations": [
+    {
+      "name": "RainbowAnimation",
+      "duration": 5.0
+    },
+    {
+      "name": "SpiralAnimation",
+      "duration": 8.0,
+      "num_arms": 3,
+      "rotation_speed": 1.5
+    },
+    {
+      "name": "RainAnimation",
+      "duration": 6.0,
+      "drop_rate": 0.4,
+      "drop_speed": 6.0
+    },
+    {
+      "name": "ExplosionAnimation",
+      "duration": 3.0
+    },
+    {
+      "name": "ForestFireAnimation",
+      "duration": 12.0,
+      "p_tree": 0.02,
+      "p_fire": 0.001,
+      "initial_density": 0.6
+    },
+    {
+      "name": "PulsingHeartAnimation",
+      "duration": 6.0,
+      "pulse_rate": 1.2
+    },
+    {
+      "name": "DemoSequenceAnimation",
+      "duration": 20.0,
+      "effect_duration": 5.0
+    },
+    {
+      "name": "SnakeGameAnimation",
+      "duration": 30.0,
+      "move_interval": 0.2
+    }
+  ]
+}
