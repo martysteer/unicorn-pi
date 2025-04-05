@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 import time
 import sys
-
+from colorsys import hsv_to_rgb
 from PIL import Image, ImageDraw, ImageFont
 from unicornhatmini import UnicornHATMini
 
@@ -18,7 +18,10 @@ if len(sys.argv) > 1:
         sys.exit(1)
 
 unicornhatmini.set_rotation(rotation)
-display_width, display_height = unicornhatmini.get_shape()
+
+# Hardcode the display dimensions for Unicorn HAT Mini
+display_width = 17
+display_height = 7
 
 print("Display dimensions: {}x{}".format(display_width, display_height))
 
@@ -55,17 +58,26 @@ except AttributeError:
 print(f"Text dimensions: {text_width}x{text_height}")
 
 # Calculate how much we need to scroll to show all text
-scroll_width = text_width + display_width
+scroll_width = text_width + (2 * display_width)  # Provide more space for scrolling
 
 # Create a new PIL image big enough to fit the text and display width
 image = Image.new('P', (scroll_width, display_height), 0)
 draw = ImageDraw.Draw(image)
 
+# Calculate vertical position to center the text
+y_position = (display_height - text_height) // 2
+if y_position < 0:
+    y_position = 0  # Ensure text isn't positioned off-screen
+
 # Draw the text into the image (white color = 255)
-draw.text((display_width, 0), text, font=font, fill=255)
+# Position text so it starts off-screen and scrolls in from the right
+draw.text((display_width, y_position), text, font=font, fill=255)
 
 # Set initial offset for scrolling
 offset_x = 0
+
+# Enable for rainbow text mode (set to True for colorful text)
+rainbow_mode = False
 
 try:
     while True:
@@ -75,9 +87,16 @@ try:
         # Draw the current portion of the text image to the display
         for y in range(display_height):
             for x in range(display_width):
-                # If the pixel in our image is lit (255), set it to white on the display
+                # If the pixel in our image is lit (255), set it with color on the display
                 if x + offset_x < image.size[0] and image.getpixel((x + offset_x, y)) == 255:
-                    unicornhatmini.set_pixel(x, y, 255, 255, 255)  # White color
+                    if rainbow_mode:
+                        # Create a rainbow effect based on position
+                        hue = (time.time() / 10.0) + (x / float(display_width * 2))
+                        r, g, b = [int(c * 255) for c in hsv_to_rgb(hue, 1.0, 1.0)]
+                        unicornhatmini.set_pixel(x, y, r, g, b)
+                    else:
+                        # Just use white for simplicity
+                        unicornhatmini.set_pixel(x, y, 255, 255, 255)
                 else:
                     unicornhatmini.set_pixel(x, y, 0, 0, 0)  # Black (off)
         
