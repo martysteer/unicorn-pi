@@ -37,7 +37,22 @@ except IOError:
     print("Warning: 5x7.ttf font not found, using default font")
 
 # Measure the size of our text
-text_width, text_height = font.getsize(text)
+# Using newer Pillow API to get text dimensions
+try:
+    # For newer Pillow versions
+    left, top, right, bottom = font.getbbox(text)
+    text_width = right - left
+    text_height = bottom - top
+except AttributeError:
+    try:
+        # Fallback for older Pillow versions that don't have getbbox
+        text_width, text_height = font.getsize(text)
+    except AttributeError:
+        # Another fallback approach if neither method is available
+        dummy_draw = ImageDraw.Draw(Image.new('P', (1, 1)))
+        text_width, text_height = dummy_draw.textsize(text, font=font)
+
+print(f"Text dimensions: {text_width}x{text_height}")
 
 # Calculate how much we need to scroll to show all text
 scroll_width = text_width + display_width
