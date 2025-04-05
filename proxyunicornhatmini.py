@@ -10,7 +10,7 @@ import time
 import colorsys
 from PIL import Image
 
-class UnicornHATMini:
+class UnicornHATMiniBase:
     # Constants matching the actual Unicorn HAT Mini
     WIDTH = 17
     HEIGHT = 7
@@ -38,7 +38,7 @@ class UnicornHATMini:
         self.button_callback = None
         
         # Scale factor for larger display (makes it easier to see)
-        self.scale = 4
+        self.scale = 15
         
         # Initialize pygame
         pygame.init()
@@ -99,7 +99,7 @@ class UnicornHATMini:
         """Clear the display."""
         self.set_all(0, 0, 0)
     
-    def set_image(self, image, offset_x=0, offset_y=0, wrap=False):
+    def set_image(self, image, offset_x=0, offset_y=0, wrap=False, bg_color=(0, 0, 0)):
         """Set pixels from a PIL image."""
         image_width, image_height = image.size
         
@@ -110,7 +110,7 @@ class UnicornHATMini:
         
         for y in range(display_height):
             for x in range(display_width):
-                r, g, b = 0, 0, 0
+                r, g, b = bg_color
                 i_x = x + offset_x
                 i_y = y + offset_y
                 
@@ -230,7 +230,7 @@ class UnicornHATMini:
 
 # Simple test if run directly
 if __name__ == "__main__":
-    unicornhatmini = UnicornHATMini()
+    unicornhatmini = UnicornHATMiniBase()
     
     try:
         hue = 0

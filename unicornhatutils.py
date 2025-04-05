@@ -15,24 +15,110 @@ from PIL import Image, ImageDraw, ImageFont, ImageOps
 if platform.system() == "Darwin":  # macOS
     try:
         # Import the proxy implementation
-        from proxyunicornhatmini import UnicornHATMini
+        from proxyunicornhatmini import UnicornHATMiniBase
         print("Using proxy UnicornHATMini implementation for macOS")
     except ImportError:
         raise ImportError("Error: proxyunicornhatmini.py not found in the current directory or PYTHONPATH.")
 else:  # Raspberry Pi or other Linux system
     try:
-        from unicornhatmini import UnicornHATMini
+        from unicornhatmini import UnicornHATMini as UnicornHATMiniBase
         print("Using actual UnicornHATMini implementation")
     except ImportError:
         raise ImportError("Error: Unicorn HAT Mini library not found. Please install it with: sudo pip3 install unicornhatmini")
 
-# Add platform-specific processing method to UnicornHATMini
-if platform.system() == "Darwin":
-    # For macOS proxy version
-    UnicornHATMini.process_events = lambda self: self.show()
-else:
-    # For actual hardware, no action needed
-    UnicornHATMini.process_events = lambda self: None
+
+class UnicornHATMini:
+    """
+    A wrapper class for UnicornHATMini that provides a consistent interface
+    across both the actual hardware and the proxy implementation.
+    """
+    
+    # Constants from UnicornHATMini
+    BUTTON_A = 5
+    BUTTON_B = 6
+    BUTTON_X = 16
+    BUTTON_Y = 24
+    
+    def __init__(self, *args, **kwargs):
+        # Initialize the appropriate implementation
+        self.unicorn = UnicornHATMiniBase(*args, **kwargs)
+        self._platform = "proxy" if platform.system() == "Darwin" else "actual"
+        
+        # Initialize button state
+        self.button_callback = None
+        
+        # For actual hardware, import and setup GPIOZero buttons
+        if self._platform == "actual":
+            try:
+                from gpiozero import Button
+                
+                # Initialize the buttons
+                self.buttons = {
+                    self.BUTTON_A: Button(self.BUTTON_A),
+                    self.BUTTON_B: Button(self.BUTTON_B),
+                    self.BUTTON_X: Button(self.BUTTON_X),
+                    self.BUTTON_Y: Button(self.BUTTON_Y)
+                }
+            except ImportError:
+                print("Warning: GPIOZero not found. Button functionality will be limited.")
+                self.buttons = {}
+    
+    def on_button_pressed(self, callback):
+        """
+        Register a callback for button press events.
+        Works across both proxy and actual implementations.
+        
+        Args:
+            callback: Function to call when a button is pressed. 
+                     It will receive the button pin number as an argument.
+        """
+        self.button_callback = callback
+        
+        if self._platform == "proxy":
+            # For the proxy, use its built-in method
+            if hasattr(self.unicorn, 'on_button_pressed'):
+                self.unicorn.on_button_pressed(callback)
+        else:
+            # For actual hardware, use GPIOZero's when_pressed
+            if hasattr(self, 'buttons') and self.buttons:
+                for pin, button in self.buttons.items():
+                    # Use a lambda with a default argument to capture current pin value
+                    button.when_pressed = lambda btn=pin: self.button_callback(btn)
+    
+    def read_button(self, pin):
+        """
+        Read the current state of a button.
+        Works across both proxy and actual implementations.
+        
+        Args:
+            pin: Button pin number (5, 6, 16, or 24)
+        
+        Returns:
+            True if button is pressed, False otherwise
+        """
+        if self._platform == "proxy":
+            # For the proxy, use its built-in method
+            if hasattr(self.unicorn, 'read_button'):
+                return self.unicorn.read_button(pin)
+        else:
+            # For actual hardware, check if the button is pressed
+            if hasattr(self, 'buttons') and pin in self.buttons:
+                return self.buttons[pin].is_pressed
+        return False
+    
+    def process_events(self):
+        """
+        Process events (needed for proxy implementation).
+        For actual hardware, this is a no-op.
+        """
+        if self._platform == "proxy" and hasattr(self.unicorn, 'process_events'):
+            self.unicorn.process_events()
+    
+    # Delegate all other methods to the wrapped UnicornHATMini instance
+    def __getattr__(self, name):
+        return getattr(self.unicorn, name)
+
+# Utility functions
 
 def process_image(image, rotation=0, flip_horizontal=False):
     """
