@@ -267,12 +267,17 @@ class SequenceCommander:
         """Start a new animation."""
         self.current_animation = animation_func
         self.animation_start_time = time.time()
-        # Initialize any animation-specific state
+        
+        # Reset animation-specific state
         if animation_func == self.snake_animation:
             # Initialize snake state
             self.snake_body = [(self.width // 2, self.height // 2)]
             self.snake_direction = (1, 0)  # Right
-            self.place_food()
+            self.snake_food = None  # Reset food
+            self.place_food()  # Place new food
+        elif animation_func == self.explosion_animation:
+            # Reset any specific states for explosion
+            pass  # Add any necessary state initializations
     
     def update(self):
         """Update the current state and display."""
@@ -287,9 +292,11 @@ class SequenceCommander:
                     # In animation mode, only auto-cycle if it's not the snake animation
                     if self.current_animation != self.snake_animation:
                         self.current_animation_index = (self.current_animation_index + 1) % len(self.animations)
-                        self.current_animation = self.animations[self.current_animation_index]
-                        self.animation_start_time = time.time()
+                        new_animation = self.animations[self.current_animation_index]
                         print(f"Auto-switching to animation {self.current_animation_index+1}/{len(self.animations)}")
+                        
+                        # Use trigger_animation to properly initialize the next animation
+                        self.trigger_animation(new_animation)
                 elif self.current_animation != self.snake_animation:
                     # In normal mode, return to standby pulse (except for snake)
                     self.current_animation = self.standby_pulse
@@ -446,20 +453,33 @@ class SequenceCommander:
     
     def place_food(self):
         """Place a new food item for the snake at a random location."""
-        if not self.snake_body:
+        if not self.snake_body or len(self.snake_body) == 0:
+            # If snake is not initialized or empty, set a default position
+            self.snake_body = [(self.width // 2, self.height // 2)]
             self.snake_food = (random.randint(0, self.width - 1), random.randint(0, self.height - 1))
             return
             
         # Find an empty spot
-        while True:
+        tries = 0
+        max_tries = 100  # Avoid infinite loop
+        while tries < max_tries:
             food_pos = (random.randint(0, self.width - 1), random.randint(0, self.height - 1))
             if food_pos not in self.snake_body:
                 self.snake_food = food_pos
-                break
+                return
+            tries += 1
+            
+        # Fallback if we can't find a spot
+        self.snake_food = (0, 0)
     
     def snake_animation(self):
         """Interactive snake game animation."""
         self.display.clear()
+        
+        # Make sure snake_body is initialized
+        if not self.snake_body:
+            self.snake_body = [(self.width // 2, self.height // 2)]
+            self.place_food()
         
         # Snake moves every N frames
         move_interval = 0.2  # seconds
