@@ -71,6 +71,7 @@ class RainbowTextScroller:
         self.width, self.height = display.get_shape()
         self.text = text
         self.font_path = font_path
+        self.scroll_x = 0
         
         # Scrolling parameters
         self.speed_settings = {
@@ -79,8 +80,10 @@ class RainbowTextScroller:
             'fast': 0.4     # pixels per frame
         }
         self.current_speed = initial_speed
-        self.scroll_x = self.width  # Start off-screen to the right
         self.scroll_step = self.speed_settings[self.current_speed]
+        
+        # Add a gap between repeated scrolls for a smooth marquee effect
+        self.gap_width = self.width  # One screen width gap
         
         # Text baseline position (vertical centering)
         self.baseline_y = (self.height - 5) // 2  # Default to vertically centered
@@ -130,11 +133,13 @@ class RainbowTextScroller:
             
         print(f"Text dimensions: {self.text_width}x{self.text_height}")
         
-        # Create a new PIL image big enough to fit the text and display width
-        # This will be our scrolling buffer
-        buffer_width = self.text_width + (2 * self.width)
-        self.text_image = Image.new("RGB", (buffer_width, self.height), (0, 0, 0))
-        self.draw = ImageDraw.Draw(self.text_image)
+        # Create a buffer that's just the size needed for the text
+        self.text_image = Image.new("RGB", (self.text_width, self.height), (0, 0, 0))
+        draw = ImageDraw.Draw(self.text_image)
+        
+        # Draw the text in the buffer
+        y_position = self.baseline_y - self.text_height // 2
+        draw.text((0, y_position), self.text, font=self.font, fill=(255, 255, 255))
     
     def change_speed(self):
         """Cycle through scroll speeds: slow -> medium -> fast -> slow..."""
@@ -195,12 +200,6 @@ class RainbowTextScroller:
         t = time.time()
         self.color_time = t
         
-        # Check if this pixel is part of the text or background
-        # For simplicity, we use black for background and apply color only to non-black pixels
-        pixel = self.text_image.getpixel((x, y))
-        if pixel == (0, 0, 0):
-            return 0, 0, 0  # Background stays black
-        
         # Different coloring modes
         mode = self.color_modes[self.current_color_mode]
         
@@ -249,46 +248,37 @@ class RainbowTextScroller:
     
     def update(self):
         """Update the display with the current frame of scrolling text."""
-        # Clear the text image
-        self.draw.rectangle((0, 0, self.text_image.width, self.text_image.height), fill=(0, 0, 0))
-        
-        # Draw the text at the baseline position
-        # Get vertical position based on baseline and text height
-        y_position = self.baseline_y - self.text_height // 2
-        self.draw.text((self.width, y_position), self.text, font=self.font, fill=(255, 255, 255))
-        
         # Clear the display
         self.display.clear()
         
-        # Calculate the visible window of the scrolling text
-        # This is based on current scroll position
-        visible_x = int(self.scroll_x)
+        # Update the scroll position
+        self.scroll_x -= self.scroll_step
         
-        # Draw each visible pixel
+        # If the text has completely scrolled off the left edge (plus gap), reset
+        if self.scroll_x < -self.text_width - self.gap_width:
+            self.scroll_x = self.width  # Reset to start off-screen to the right
+        
+        # Draw the text onto the display
         for y in range(self.height):
             for x in range(self.width):
-                # Get the corresponding position in the text image
-                text_x = x + visible_x
+                # Calculate position in the text image
+                text_x = x - int(self.scroll_x)
                 
-                # Skip if out of bounds
-                if text_x < 0 or text_x >= self.text_image.width:
-                    continue
-                
-                # Apply the current color effect
-                r, g, b = self.get_pixel_color(text_x, text_x - self.width, y)
-                
-                # Set the pixel on the display
-                self.display.set_pixel(x, y, r, g, b)
+                # Check if this pixel is within the text bounds
+                if 0 <= text_x < self.text_width:
+                    # Get pixel from text image
+                    pixel = self.text_image.getpixel((text_x, y))
+                    
+                    # Apply color effects to non-background pixels
+                    if pixel != (0, 0, 0):
+                        # Get color
+                        r, g, b = self.get_pixel_color(text_x, text_x, y)
+                        
+                        # Set pixel
+                        self.display.set_pixel(x, y, r, g, b)
         
         # Update the display
         self.display.show()
-        
-        # Update scroll position for next frame
-        self.scroll_x -= self.scroll_step
-        
-        # If the text has scrolled completely off the left edge, reset to start
-        if self.scroll_x < -self.text_width:
-            self.scroll_x = self.width
     
     def run(self):
         """Run the main loop of the text scroller."""
