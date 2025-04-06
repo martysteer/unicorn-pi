@@ -1,24 +1,25 @@
-import sys
-import time
+#!/usr/bin/env python3
+"""
+Realtime Text Display for Unicorn HAT Mini
 
+A simple script that displays single characters typed in real-time.
+Each keypress replaces what's currently shown on the display.
+
+Press Ctrl+C to exit.
+"""
+
+import sys
+from PIL import Image, ImageDraw, ImageFont
+
+# Try to import the Unicorn HAT Mini library
 try:
     from unicornhatmini import UnicornHATMini
 except ImportError:
-    from unicornhatutils import UnicornHATMini
-
-# Initialize the display
-display = UnicornHATMini()
-display.set_brightness(0.5)
-display.clear()
-
-# Define the bitmap font (5x7 ASCII font)
-font = {
     ' ': [0x00, 0x00, 0x00, 0x00, 0x00],
     '!': [0x00, 0x00, 0x5F, 0x00, 0x00],
     '"': [0x00, 0x07, 0x00, 0x07, 0x00],
     '#': [0x14, 0x7F, 0x14, 0x7F, 0x14],
     ':': [0x24, 0x2A, 0x7F, 0x2A, 0x12],
-    '%': [0x23, 0x13, 0x08, 0x64, 0x62],
     '&': [0x36, 0x49, 0x55, 0x22, 0x50],
     "'": [0x00, 0x05, 0x03, 0x00, 0x00],
     '(': [0x00, 0x1C, 0x22, 0x41, 0x00],
@@ -55,9 +56,6 @@ font = {
     'G': [0x3E, 0x41, 0x41, 0x51, 0x32],
     'H': [0x7F, 0x08, 0x08, 0x08, 0x7F],
     'I': [0x00, 0x41, 0x7F, 0x41, 0x00],
-    'J': [0x20, 0x40, 0x41, 0x3F, 0x01],
-    'K': [0x7F, 0x08, 0x14, 0x22, 0x41],
-    'L': [0x7F, 0x40, 0x40, 0x40, 0x40],
     'M': [0x7F, 0x02, 0x04, 0x02, 0x7F],
     'N': [0x7F, 0x04, 0x08, 0x10, 0x7F],
     'O': [0x3E, 0x41, 0x41, 0x41, 0x3E],
@@ -71,8 +69,6 @@ font = {
     'W': [0x7F, 0x20, 0x18, 0x20, 0x7F],
     'X': [0x63, 0x14, 0x08, 0x14, 0x63],
     'Y': [0x03, 0x04, 0x78, 0x04, 0x03],
-    'Z': [0x61, 0x51, 0x49, 0x45, 0x43],
-    '[': [0x00, 0x00, 0x7F, 0x41, 0x41],
     ']': [0x41, 0x41, 0x7F, 0x00, 0x00],
     '^': [0x04, 0x02, 0x01, 0x02, 0x04],
     '_': [0x40, 0x40, 0x40, 0x40, 0x40],
@@ -121,58 +117,93 @@ def render_char(char, x, y, color=(255, 255, 255)):
         for col in range(5):
             if bitmap[row] & (1 << (4 - col)):
                 display.set_pixel(x + col, y + row, *color)
+    try:
+        fd = sys.stdin.fileno()
+        old_settings = termios.tcgetattr(fd)
+        try:
+            tty.setraw(fd)
+            ch = sys.stdin.read(1)
+        finally:
+            termios.tcsetattr(fd, termios.TCSADRAIN, old_settings)
+        return ch
+    except ImportError:
+        # For Windows
+        import msvcrt
+        return msvcrt.getch().decode('utf-8')
 
-def clear_display():
-    """Clear the display."""
+def render_char(char, display):
+    """Render a single character on the Unicorn HAT Mini"""
+    # Clear the display first
     display.clear()
+    
+    # Get display dimensions
+    width, height = display.get_shape()
+    
+    # Create a blank image
+    image = Image.new("RGB", (width, height), (0, 0, 0))
+    draw = ImageDraw.Draw(image)
+    
+    # Try to load a font, fall back to default if necessary
+    try:
+        font = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSansMono.ttf", 8)
+    except IOError:
+        font = ImageFont.load_default()
+    
+    # Draw the character centered on the display
+    try:
+        # For newer PIL versions
+        text_width, text_height = draw.textbbox((0, 0), char, font=font)[2:4]
+    except AttributeError:
+        # Fallback for older PIL versions
+        text_width, text_height = draw.textsize(char, font=font)
+    
+    # Center the character
+    x = (width - text_width) // 2
+    y = (height - text_height) // 2
+    
+    # Draw the character in white
+    draw.text((x, y), char, fill=(255, 255, 255), font=font)
+    
+    # Set pixels directly on the display
+    for y in range(height):
+        for x in range(width):
+            r, g, b = image.getpixel((x, y))
+            display.set_pixel(x, y, r, g, b)
+    
+    # Update the display
     display.show()
 
 def main():
-    """Main function to run the typewriter script."""
-    x, y = 0, 0
-    color = (255, 255, 255)  # White text color
-
+    # Initialize the Unicorn HAT Mini
+    display = UnicornHATMini()
+    display.set_brightness(0.5)
+    display.clear()
+    display.show()
+    
+    print("Realtime Text Display for Unicorn HAT Mini")
+    print("Type characters to display them. Press Ctrl+C to exit.")
+    
     try:
         while True:
-            char = sys.stdin.read(1)
-            if char:
-                if char == '\n':
-                    # Handle line breaks
-                    x = 0
-                    y += 8
-                    if y >= display.HEIGHT:
-                        y = 0
-                        clear_display()
-                elif char == '\b':
-                    # Handle backspace
-                    if x > 0:
-                        x -= 6
-                        if x < 0:
-                            x = display.WIDTH - 6
-                            y -= 8
-                            if y < 0:
-                                y = display.HEIGHT - 8
-                        for i in range(5):
-                            for j in range(7):
-                                display.set_pixel(x + i, y + j, 0, 0, 0)
-                else:
-                    # Render the character on the display
-                    clear_display()  # Clear the display before rendering the new character
-                    render_char(char, x, y, color)
-                    x += 6
-                    if x >= display.WIDTH:
-                        x = 0
-                        y += 8
-                        if y >= display.HEIGHT:
-                            y = 0
-                            clear_display()
-                display.show()
-            else:
-                time.sleep(0.1)  # Small delay when no input is available
+            char = getch()
+            
+            # Check for Ctrl+C (ASCII value 3)
+            if ord(char) == 3:
+                raise KeyboardInterrupt
+            
+            # Echo the character to the terminal
+            sys.stdout.write(char)
+            sys.stdout.flush()
+            
+            # Render the character on the display
+            render_char(char, display)
     except KeyboardInterrupt:
-        # Handle keyboard interrupt (Ctrl+C)
-        clear_display()
+        print("\nExiting...")
+    finally:
+        # Clear the display
+        display.clear()
+        display.show()
+        print("\nDisplay cleared.")
 
-
-if __name__ == '__main__':
+if __name__ == "__main__":
     main()
