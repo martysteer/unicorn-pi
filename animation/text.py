@@ -633,3 +633,163 @@ class StaticTextAnimation(TextAnimation):
                         # Get color based on our color mode
                         color = self.get_color(text_x, y, time.time() - self.start_time)
                         self.display.set_pixel(x, y, *color)
+
+
+
+@register_animation(name="ScrollingTextAnimation")
+class ScrollingTextAnimation(TextAnimation):
+    """Horizontal scrolling text animation."""
+
+    def setup(self):
+        """Set up the scrolling text animation."""
+        super().setup()
+        self.scroll_speed = self.config.get('scroll_speed', 30)  # Pixels per second
+        self.scroll_x = 0  # Initial scroll position
+
+    def update(self, dt):
+        """Update the scrolling text animation."""
+        self.display.clear()
+
+        # Update scroll position
+        self.scroll_x -= self.scroll_speed * dt
+        if self.scroll_x < -self.text_width:
+            self.scroll_x = 0  # Loop text back
+
+        # Calculate integer scroll offset for display
+        x_offset = int(self.scroll_x)
+
+        # Draw the text image with scrolling offset
+        for y in range(self.height):
+            for x in range(self.width):
+                text_x = x - x_offset
+                if 0 <= text_x < self.text_width:
+                    pixel = self.text_image.getpixel((text_x, y))
+                    if pixel != (0, 0, 0):
+                        color = self.get_color(text_x, y, time.time() - self.start_time)
+                        self.display.set_pixel(x, y, *color)
+
+
+@register_animation(name="TypewriterAnimation")
+class TypewriterAnimation(TextAnimation):
+    """Typewriter text animation."""
+
+    def setup(self):
+        """Set up the typewriter text animation."""
+        super().setup()
+        self.type_speed = self.config.get('type_speed', 5)  # Characters per second
+        self.typed_chars = 0
+        self.last_type_time = self.start_time
+
+    def update(self, dt):
+        """Update the typewriter text animation."""
+        self.display.clear()
+
+        # Determine number of characters to type based on time
+        time_elapsed = time.time() - self.last_type_time
+        chars_to_type = int(time_elapsed * self.type_speed)
+
+        if chars_to_type > 0:
+            self.typed_chars = min(len(self.text), self.typed_chars + chars_to_type)
+            self.last_type_time = time.time()
+
+        # Render only the typed portion of the text
+        current_text = self.text[:self.typed_chars]
+
+        # Re-create text image with the current text
+        self.text_image = Image.new("RGB", (max(1, self.text_width), self.height), (0, 0, 0)) # Re-use self.text_width, might be slightly off if text changes drastically
+        draw = ImageDraw.Draw(self.text_image)
+
+        if isinstance(self.font, CustomPixelFont):
+            self.font.render_text(draw, current_text, (0, (self.height - self.text_height) // 2), self.color) # Default to center position
+        else:
+            draw.text((0, (self.height - self.text_height) // 2), current_text, font=self.font, fill=self.color)
+
+        # Draw the text image
+        x_pos = (self.width - self.text_width) // 2 # Center horizontally - might need adjustment for dynamic text width
+        for y in range(self.height):
+            for x in range(self.width):
+                text_x = x - x_pos
+                if 0 <= text_x < self.text_width: # Use original text_width for bounds
+                    pixel = self.text_image.getpixel((text_x, y))
+                    if pixel != (0, 0, 0):
+                        color = self.get_color(text_x, y, time.time() - self.start_time)
+                        self.display.set_pixel(x, y, *color)
+
+
+@register_animation(name="FadeTextAnimation")
+class FadeTextAnimation(TextAnimation):
+    """Fade in/out text animation."""
+
+    def setup(self):
+        """Set up the fade text animation."""
+        super().setup()
+        self.fade_duration = self.config.get('fade_duration', 2.0) # Total fade in and out duration
+        self.fade_in_duration = self.fade_duration / 2.0 # Fade in for half the duration
+        self.fade_out_duration = self.fade_duration / 2.0 # Fade out for half the duration
+
+    def update(self, dt):
+        """Update the fade text animation."""
+        self.display.clear()
+
+        elapsed_time = time.time() - self.start_time
+        cycle_time = elapsed_time % self.fade_duration # Time within the fade cycle
+        alpha = 0.0 # Opacity
+
+        if cycle_time < self.fade_in_duration:
+            # Fade in
+            alpha = cycle_time / self.fade_in_duration
+        elif cycle_time < self.fade_duration:
+            # Fade out
+            alpha = 1.0 - ((cycle_time - self.fade_in_duration) / self.fade_out_duration)
+
+        alpha = max(0.0, min(1.0, alpha)) # Ensure alpha is within 0-1 range
+
+        # Draw the text image with alpha blending
+        x_pos = (self.width - self.text_width) // 2
+        for y in range(self.height):
+            for x in range(self.width):
+                text_x = x - x_pos
+                if 0 <= text_x < self.text_width:
+                    pixel = self.text_image.getpixel((text_x, y))
+                    if pixel != (0, 0, 0):
+                        base_color = self.get_color(text_x, y, time.time() - self.start_time)
+                        r, g, b = base_color
+                        display_r = int(r * alpha)
+                        display_g = int(g * alpha)
+                        display_b = int(b * alpha)
+                        self.display.set_pixel(x, y, display_r, display_g, display_b)
+
+
+@register_animation(name="PulsingTextAnimation")
+class PulsingTextAnimation(TextAnimation):
+    """Pulsing text animation (size/brightness)."""
+
+    def setup(self):
+        """Set up the pulsing text animation."""
+        super().setup()
+        self.pulse_rate = self.config.get('pulse_rate', 1.0) # Pulses per second
+        self.min_brightness = self.config.get('min_brightness', 0.3) # Minimum brightness of the pulse
+
+    def update(self, dt):
+        """Update the pulsing text animation."""
+        self.display.clear()
+
+        # Calculate pulse factor (0.0 to 1.0)
+        t = time.time() - self.start_time
+        pulse = (math.sin(t * self.pulse_rate * 2 * math.pi - math.pi/2) + 1) / 2
+        brightness = self.min_brightness + (1.0 - self.min_brightness) * pulse
+
+        # Draw the text image with brightness modulation
+        x_pos = (self.width - self.text_width) // 2
+        for y in range(self.height):
+            for x in range(self.width):
+                text_x = x - x_pos
+                if 0 <= text_x < self.text_width:
+                    pixel = self.text_image.getpixel((text_x, y))
+                    if pixel != (0, 0, 0):
+                        base_color = self.get_color(text_x, y, time.time() - self.start_time)
+                        r, g, b = base_color
+                        display_r = int(r * brightness)
+                        display_g = int(g * brightness)
+                        display_b = int(b * brightness)
+                        self.display.set_pixel(x, y, display_r, display_g, display_b)
