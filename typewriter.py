@@ -354,8 +354,9 @@ def update_marquee(display, text_buffer, speed_factor=1.0):
         display.show()
         return
     
-    # Calculate the total width of all characters (for wrapping)
-    total_width = len(text_buffer.chars) * text_buffer.char_unit
+    # Calculate the total width of all characters plus two spaces for the gap
+    char_gap = text_buffer.char_unit * 2  # Add two spaces worth of gap
+    total_width = len(text_buffer.chars) * text_buffer.char_unit + char_gap
     
     # Increment marquee offset
     text_buffer.marquee_offset += 0.5 * speed_factor
@@ -374,6 +375,15 @@ def update_marquee(display, text_buffer, speed_factor=1.0):
         # Wrap around for continuous scrolling
         if x_pos < -text_buffer.char_width:
             x_pos += total_width
+        
+        # Only draw if at least partially on screen
+        if -CHAR_WIDTH < x_pos < display.get_shape()[0]:
+            render_bitmap_char(display, char, (x_pos, text_buffer.y_position), color)
+    
+    # Draw the wrapped characters that appear at the beginning of the loop
+    for i, (char, color) in enumerate(text_buffer.chars):
+        # Calculate position for wrapped text (after the gap)
+        x_pos = i * text_buffer.char_unit + (len(text_buffer.chars) * text_buffer.char_unit + char_gap - text_buffer.marquee_offset)
         
         # Only draw if at least partially on screen
         if -CHAR_WIDTH < x_pos < display.get_shape()[0]:
