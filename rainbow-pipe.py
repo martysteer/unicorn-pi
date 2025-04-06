@@ -7,6 +7,7 @@ A script that scrolls multicolored text from stdin with interactive button contr
 - Button B: Cycle through different color animation effects
 - Button X: Move text baseline down
 - Button Y: Move text baseline up
+- Button A+B (long press): Toggle static display mode in livefeed mode
 
 Usage: 
   - With default text: python rainbow-pipe.py
@@ -16,8 +17,12 @@ Usage:
 Options:
   --no-default: Don't show default text when piping input
   --livefeed: Enable live feed mode (resets display when input pauses)
+  --no-static: Disable static display mode on Enter key in livefeed mode
 
-In live feed mode, the display will reset if there's a pause in the input stream.
+In live feed mode:
+- The display will reset if there's a pause in the input stream
+- When the user presses Enter, the current text stops scrolling and displays statically
+- Press A+B buttons together to toggle between scrolling and static display
 """
 
 import argparse
@@ -83,13 +88,16 @@ def parse_arguments():
     parser.add_argument('--no-default', action='store_true',
                        help='Do not show default text when piping input')
     
+    parser.add_argument('--no-static', action='store_true',
+                       help='Disable static display mode on Enter in livefeed mode')
+    
     return parser.parse_args()
 
 
 class InputReader(threading.Thread):
     """Thread for reading input from stdin without blocking the main thread."""
     
-    def __init__(self, input_queue, livefeed_mode=False, timeout=2.0):
+    def __init__(self, input_queue, livefeed_mode=False, timeout=2.0, static_on_enter=True):
         """Initialize the input reader thread."""
         super().__init__(daemon=True)
         self.input_queue = input_queue
@@ -98,6 +106,7 @@ class InputReader(threading.Thread):
         self.running = True
         self.last_input_time = time.time()
         self.buffer = ""
+        self.static_on_enter = static_on_enter and livefeed_mode
     
     def run(self):
         """Run the input reader thread."""
@@ -118,7 +127,11 @@ class InputReader(threading.Thread):
                             # Send complete lines to the queue
                             for line in lines:
                                 if line:  # Skip empty lines
-                                    self.input_queue.put(line + '\n')
+                                    # Add a special marker for Enter key if enabled
+                                    if self.static_on_enter:
+                                        self.input_queue.put(line + '\0STATIC\0')
+                                    else:
+                                        self.input_queue.put(line + '\n')
                         self.last_input_time = time.time()
                 else:
                     # Send any remaining buffered content after a short pause
@@ -225,7 +238,7 @@ class RainbowPipeScroller:
     """Controls the scrolling text display and button interactions."""
     
     def __init__(self, display, initial_text="", font_path=None, initial_speed='medium', 
-                 livefeed_mode=False, timeout=2.0, gap_width=16):
+                 livefeed_mode=False, timeout=2.0, gap_width=16, static_on_enter=True):
         """Initialize the rainbow text scroller."""
         self.display = display
         self.width, self.height = display.get_shape()
@@ -234,10 +247,12 @@ class RainbowPipeScroller:
         self.livefeed_mode = livefeed_mode
         self.input_timeout = timeout
         self.use_custom_pixel_font = True  # Use the custom pixel font by default
+        self.static_on_enter = static_on_enter and livefeed_mode
+        self.static_display = False  # Flag to indicate static display mode
         
         # Input handling
         self.input_queue = queue.Queue()
-        self.input_reader = InputReader(self.input_queue, livefeed_mode, timeout)
+        self.input_reader = InputReader(self.input_queue, livefeed_mode, timeout, static_on_enter)
         self.input_reader.start()
         self.text_buffer = initial_text
         self.last_buffer_update = time.time()
@@ -357,6 +372,7 @@ class RainbowPipeScroller:
         # Process all available input
         reset_signal = False
         new_input = False
+        static_signal = False
         
         while not self.input_queue.empty():
             new_input = True
@@ -366,13 +382,30 @@ class RainbowPipeScroller:
             if self.livefeed_mode and text == "\0RESET\0":
                 reset_signal = True
                 self.text_buffer = ""
+                self.static_display = False
                 print("[LiveFeed] Reset detected - clearing display")
+                break
+                
+            # Check for static display signal in livefeed mode
+            if self.livefeed_mode and self.static_on_enter and text.endswith("\0STATIC\0"):
+                static_signal = True
+                # Remove the marker and add the text
+                clean_text = text.replace("\0STATIC\0", "")
+                print(f"[LiveFeed] Static display mode: '{clean_text}'")
+                # Store previous text width for transition calculations
+                prev_width = self.text_width if self.text_image else 0
+                self.text_buffer = clean_text
+                # Update the text image to get new dimensions
+                self.update_text_image()
+                # Enable static display and center the text
+                self.static_display = True
+                self.scroll_x = (self.width - self.text_width) // 2
                 break
             
             # In livefeed mode, handle reset and scrolling differently
-            if self.livefeed_mode:
+            if self.livefeed_mode and not static_signal:
                 # If text has scrolled mostly off screen, clear it
-                if self.scroll_x < -self.text_width * 0.7:
+                if self.scroll_x < -self.text_width * 0.7 and not self.static_display:
                     self.text_buffer = ""
                     self.scroll_x = self.width
                 
@@ -425,8 +458,35 @@ class RainbowPipeScroller:
             self.display.BUTTON_A: self.change_speed,
             self.display.BUTTON_B: self.change_color_mode,
             self.display.BUTTON_X: lambda: self.move_baseline(1),   # Down (increase Y)
-            self.display.BUTTON_Y: lambda: self.move_baseline(-1),  # Up (decrease Y)
+            self.display.BUTTON_Y: lambda: self.move_baseline(-1),  # Up (decrease Y),
         }
+        
+        # Add a special button handler for static mode toggle
+        if self.livefeed_mode and self.static_on_enter:
+            # Long press A+B together to toggle static mode
+            if self.display.read_button(self.display.BUTTON_A) and self.display.read_button(self.display.BUTTON_B):
+                # Check if both buttons were pressed for at least 0.5 seconds
+                # We'll use the stored times in prev_button_states for this check
+                ab_press_time = self.prev_button_states.get('ab_press_time', 0)
+                if ab_press_time > 0 and time.time() - ab_press_time > 0.5:
+                    self.static_display = not self.static_display
+                    print(f"[LiveFeed] Static display mode: {'enabled' if self.static_display else 'disabled'}")
+                    self.needs_redraw = True
+                    
+                    # For static mode, center the text
+                    if self.static_display:
+                        self.scroll_x = (self.width - self.text_width) // 2
+                    else:
+                        self.scroll_x = self.width  # Reset scroll position
+                        
+                    # Reset button press time to avoid toggling multiple times
+                    self.prev_button_states['ab_press_time'] = time.time()
+                    return  # Skip normal button processing
+            else:
+                # Start tracking A+B press time
+                if self.display.read_button(self.display.BUTTON_A) or self.display.read_button(self.display.BUTTON_B):
+                    if 'ab_press_time' not in self.prev_button_states:
+                        self.prev_button_states['ab_press_time'] = time.time()
         
         for button, action in buttons.items():
             # Get previous and current button state
@@ -510,12 +570,16 @@ class RainbowPipeScroller:
                 self.needs_redraw = False
             return
         
-        # Update the scroll position
-        self.scroll_x -= self.scroll_step
-        self.needs_redraw = True
+        # Update the scroll position if not in static display mode
+        if not self.static_display:
+            self.scroll_x -= self.scroll_step
+            self.needs_redraw = True
+        else:
+            # In static display mode, center the text
+            self.scroll_x = (self.width - self.text_width) // 2
         
         # If the text has completely scrolled off the left edge (plus gap), reset
-        if self.scroll_x < -self.text_width - self.gap_width:
+        if not self.static_display and self.scroll_x < -self.text_width - self.gap_width:
             self.scroll_x = self.width  # Reset to start off-screen to the right
         
         # Clear the display
@@ -611,6 +675,9 @@ def main():
             initial_text = sys.stdin.read()
     
     # Create and run the text scroller
+    # Only enable static display on Enter if livefeed mode is active
+    static_on_enter = args.livefeed and not args.no_static
+    
     scroller = RainbowPipeScroller(
         display=display,
         initial_text=initial_text,
@@ -618,7 +685,8 @@ def main():
         initial_speed=args.speed,
         livefeed_mode=args.livefeed,
         timeout=args.timeout,
-        gap_width=args.gap
+        gap_width=args.gap,
+        static_on_enter=static_on_enter
     )
     
     scroller.run()
