@@ -1,21 +1,31 @@
 #!/usr/bin/env python3
 """
-Realtime Text Display for Unicorn HAT Mini
+Animated Text Display for Unicorn HAT Mini
 
-A simple script that displays single characters typed in real-time.
-Each keypress replaces what's currently shown on the display.
+A script that displays typed characters with various animation styles.
+Each keypress updates the display with the new character.
+
+Animation modes:
+- 'push': Each new character pushes in from the right, moving existing text left
+- 'pop': Characters build up from right to left, creating a text queue
+- 'marquee': Text scrolls continuously from right to left in a loop
 
 Features:
 - Uses a custom 5x5 bitmap font for a retro pixel art look
-- Each new character appears in a random color
-- Characters are centered on the display
+- Characters appear in random colors
+- Command-line arguments to select animation mode
+
+Usage:
+    python typewriter.py --type [push|pop|marquee]
 
 Press Ctrl+C to exit.
 """
 
 import sys
+import time
 import random
-from PIL import Image, ImageDraw
+import argparse
+from collections import deque
 
 # Try to import the Unicorn HAT Mini library
 try:
@@ -104,6 +114,11 @@ BITMAP_FONT = {
     '|': [0x04, 0x04, 0x04, 0x04, 0x04],
 }
 
+# Constants
+CHAR_WIDTH = 5  # Width of each character in pixels
+CHAR_HEIGHT = 5  # Height of each character in pixels
+CHAR_SPACING = 1  # Space between characters
+
 def get_random_color():
     """Generate a vibrant random RGB color"""
     # Use more vibrant colors by avoiding dark/low values
@@ -132,17 +147,17 @@ def getch():
         import msvcrt
         return msvcrt.getch().decode('utf-8')
 
-def render_bitmap_char(char, display, color=None):
-    """Render a character using the bitmap font on the Unicorn HAT Mini"""
-    # Generate a random color if none provided
-    if color is None:
-        color = get_random_color()
+def render_bitmap_char(display, char, position, color):
+    """
+    Render a single character at a specific position
     
-    # Clear the display first
-    display.clear()
-    
-    # Get display dimensions
-    width, height = display.get_shape()
+    Args:
+        display: UnicornHATMini instance
+        char: Character to render
+        position: (x, y) tuple for top-left position
+        color: RGB color tuple
+    """
+    x_pos, y_pos = position
     
     # Convert to uppercase for our font (only uppercase is defined)
     char = char.upper()
@@ -154,66 +169,241 @@ def render_bitmap_char(char, display, color=None):
     # Get the bitmap pattern for the character
     pattern = BITMAP_FONT[char]
     
-    # Number of bits per row (5 for our font)
-    char_width = 5
-    char_height = len(pattern)
-    
-    # Calculate position to center the character on the display
-    x_offset = (width - char_width) // 2
-    y_offset = (height - char_height) // 2
-    
     # Set pixels based on the bitmap pattern
-    for y in range(char_height):
+    for y in range(CHAR_HEIGHT):
         # Get the hex value for this row
         row_pattern = pattern[y]
         
-        # Convert the hex value to binary and check each bit
-        for x in range(char_width):
+        # Check each bit in the row
+        for x in range(CHAR_WIDTH):
             # Check if bit is set (1), starting from MSB
-            # The bit position for a 5-bit wide font is: 4, 3, 2, 1, 0
-            bit_position = char_width - 1 - x
+            bit_position = CHAR_WIDTH - 1 - x
             if row_pattern & (1 << bit_position):
-                display.set_pixel(x + x_offset, y + y_offset, *color)
+                # Calculate the actual position on the display
+                pixel_x = x_pos + x
+                pixel_y = y_pos + y
+                
+                # Check if the pixel is within display bounds
+                if 0 <= pixel_x < display.get_shape()[0] and 0 <= pixel_y < display.get_shape()[1]:
+                    display.set_pixel(pixel_x, pixel_y, *color)
+
+def clear_display(display):
+    """Clear the display and show it"""
+    display.clear()
+    display.show()
+
+def animate_push(display, char_queue):
+    """
+    Animate a new character pushing in from the right
+    
+    Args:
+        display: UnicornHATMini instance
+        char_queue: List of (char, color) tuples
+    """
+    width, height = display.get_shape()
+    
+    # Calculate the total width of the character sequence
+    total_width = len(char_queue) * (CHAR_WIDTH + CHAR_SPACING) - CHAR_SPACING
+    
+    # Number of animation steps (a character width plus spacing)
+    steps = CHAR_WIDTH + CHAR_SPACING
+    
+    # Animate the push
+    for step in range(steps):
+        display.clear()
+        
+        # Calculate offset for this animation step
+        offset = steps - step - 1
+        
+        # Draw each character at its offset position
+        for i, (char, color) in enumerate(char_queue):
+            # Calculate the x position for this character
+            x_pos = width - total_width + (i * (CHAR_WIDTH + CHAR_SPACING)) - offset
+            
+            # Only draw if it's at least partially on screen
+            if x_pos + CHAR_WIDTH > 0:
+                render_bitmap_char(display, char, (x_pos, 1), color)
+        
+        # Update the display
+        display.show()
+        time.sleep(0.03)  # Animation speed
+
+def animate_pop(display, char_queue):
+    """
+    Animate a new character appearing from the right
+    
+    Args:
+        display: UnicornHATMini instance
+        char_queue: List of (char, color) tuples
+    """
+    width, height = display.get_shape()
+    
+    # Calculate how many characters we can fit on screen
+    max_chars = (width + CHAR_SPACING) // (CHAR_WIDTH + CHAR_SPACING)
+    
+    # Take only the characters that will fit on screen
+    visible_chars = char_queue[-max_chars:] if len(char_queue) > max_chars else char_queue
+    
+    # Calculate the total width of the visible character sequence
+    total_width = len(visible_chars) * (CHAR_WIDTH + CHAR_SPACING) - CHAR_SPACING
+    
+    # Clear the display
+    display.clear()
+    
+    # Draw each character
+    for i, (char, color) in enumerate(visible_chars):
+        # Calculate the x position for this character (right-aligned)
+        x_pos = width - total_width + (i * (CHAR_WIDTH + CHAR_SPACING))
+        
+        # Render the character
+        render_bitmap_char(display, char, (x_pos, 1), color)
+    
+    # Update the display
+    display.show()
+
+def animate_marquee(display, text, colors, offset):
+    """
+    Animate a continuous scrolling marquee effect
+    
+    Args:
+        display: UnicornHATMini instance
+        text: String of characters to display
+        colors: List of colors corresponding to each character
+        offset: Current pixel offset for the animation
+        
+    Returns:
+        New offset value
+    """
+    width, height = display.get_shape()
+    
+    # Calculate the total width of the text (including inter-character spacing)
+    total_width = len(text) * (CHAR_WIDTH + CHAR_SPACING) - CHAR_SPACING
+    
+    # Clear the display
+    display.clear()
+    
+    # Draw each character at its offset position
+    for i, char in enumerate(text):
+        # Calculate the x position for this character with wrapping
+        char_offset = (i * (CHAR_WIDTH + CHAR_SPACING) - offset) % total_width
+        
+        # When we've wrapped around, add the total width to ensure continuity
+        if char_offset < 0:
+            char_offset += total_width
+            
+        # Convert to screen position (start outside the right edge)
+        x_pos = width + char_offset - total_width
+        
+        # Only draw if it's at least partially on screen
+        if 0 <= x_pos < width:
+            render_bitmap_char(display, char, (x_pos, 1), colors[i])
     
     # Update the display
     display.show()
     
-    # Return the color used (for display in terminal)
-    return color
+    # Increment and wrap the offset
+    offset = (offset + 1) % total_width
+    
+    # Return the new offset
+    return offset
+
+def parse_arguments():
+    """Parse command-line arguments"""
+    parser = argparse.ArgumentParser(description='Animated Text Display for Unicorn HAT Mini')
+    
+    parser.add_argument('--type', '-t', 
+                        choices=['push', 'pop', 'marquee'],
+                        default='push',
+                        help='Animation style: push, pop, or marquee')
+    
+    parser.add_argument('--brightness', '-b',
+                        type=float,
+                        default=0.5,
+                        help='Display brightness from 0.0 to 1.0')
+    
+    return parser.parse_args()
 
 def main():
+    # Parse command-line arguments
+    args = parse_arguments()
+    
     # Initialize the Unicorn HAT Mini
     display = UnicornHATMini()
-    display.set_brightness(0.5)
-    display.clear()
-    display.show()
+    display.set_brightness(args.brightness)
+    clear_display(display)
     
-    print("Colorful Bitmap Font Typewriter for Unicorn HAT Mini")
-    print("Type characters to display them in random colors. Press Ctrl+C to exit.")
+    # Initialize text state
+    char_queue = []  # List of (char, color) tuples
+    marquee_offset = 0
+    animation_mode = args.type
+    
+    print(f"Animated Text Display for Unicorn HAT Mini ({animation_mode} mode)")
+    print("Type characters to display them. Press Ctrl+C to exit.")
+    
+    # For marquee mode, we need to handle animation continuously
+    marquee_last_update = time.time()
+    marquee_update_interval = 0.05  # Update every 50ms
     
     try:
         while True:
-            char = getch()
+            # Check for keyboard input (non-blocking)
+            if animation_mode == 'marquee' and char_queue:
+                # For marquee mode, we need to continuously update even without input
+                import select
+                if select.select([sys.stdin], [], [], 0.0)[0]:
+                    char = getch()
+                    has_input = True
+                else:
+                    char = None
+                    has_input = False
+                    
+                # Update marquee animation at regular intervals
+                current_time = time.time()
+                if current_time - marquee_last_update >= marquee_update_interval:
+                    # Convert char_queue to strings and color lists for the marquee function
+                    text = ''.join(c for c, _ in char_queue)
+                    colors = [color for _, color in char_queue]
+                    
+                    # Update the marquee animation
+                    marquee_offset = animate_marquee(display, text, colors, marquee_offset)
+                    marquee_last_update = current_time
+            else:
+                # For other modes, we wait for input
+                char = getch()
+                has_input = True
             
-            # Check for Ctrl+C (ASCII value 3)
-            if ord(char) == 3:
-                raise KeyboardInterrupt
+            # Process input if we have it
+            if has_input:
+                # Check for Ctrl+C (ASCII value 3)
+                if char and ord(char) == 3:
+                    raise KeyboardInterrupt
+                
+                if char:
+                    # Generate a random color for this character
+                    color = get_random_color()
+                    
+                    # Add the character to the queue
+                    char_queue.append((char, color))
+                    
+                    # Echo the character to the terminal with color info
+                    sys.stdout.write(f"{char} [RGB: {color[0]},{color[1]},{color[2]}]\n")
+                    sys.stdout.flush()
+                    
+                    # Animate based on the selected mode
+                    if animation_mode == 'push':
+                        animate_push(display, char_queue)
+                    elif animation_mode == 'pop':
+                        animate_pop(display, char_queue)
+                    # For marquee mode, the animation is handled above
             
-            # Generate a random color for this character
-            color = get_random_color()
+            # Add a small delay to prevent CPU hogging
+            time.sleep(0.01)
             
-            # Echo the character to the terminal with color info
-            sys.stdout.write(f"{char} [RGB: {color[0]},{color[1]},{color[2]}]\n")
-            sys.stdout.flush()
-            
-            # Render the character on the display using our bitmap font
-            render_bitmap_char(char, display, color)
     except KeyboardInterrupt:
         print("\nExiting...")
     finally:
         # Clear the display
-        display.clear()
-        display.show()
+        clear_display(display)
         print("\nDisplay cleared.")
 
 if __name__ == "__main__":
