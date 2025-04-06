@@ -230,7 +230,7 @@ class RainbowPipeScroller:
         self.display = display
         self.width, self.height = display.get_shape()
         self.font_path = font_path
-        self.scroll_x = 0
+        self.scroll_x = self.width  # Start scrolling from right edge
         self.livefeed_mode = livefeed_mode
         self.input_timeout = timeout
         self.use_custom_pixel_font = True  # Use the custom pixel font by default
@@ -349,9 +349,8 @@ class RainbowPipeScroller:
             # Use PIL's text rendering with pixel-perfect mode
             draw.text((0, y_position), self.text_buffer, font=self.font, fill=(255, 255, 255))
         
-        # In livefeed mode, reset the scroll position when text is updated
-        if self.livefeed_mode:
-            self.scroll_x = self.width
+        # Always reset scroll position to start from the right edge
+        self.scroll_x = self.width
     
     def check_input(self):
         """Check for new input from stdin."""
