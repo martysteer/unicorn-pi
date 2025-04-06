@@ -135,39 +135,44 @@ def main():
     try:
         while True:
             char = sys.stdin.read(1)
-            if char == '\n':
-                # Handle line breaks
-                x = 0
-                y += 8
-                if y >= display.HEIGHT:
-                    y = 0
-                    clear_display()
-            elif char == '\b':
-                # Handle backspace
-                if x > 0:
-                    x -= 6
-                    if x < 0:
-                        x = display.WIDTH - 6
-                        y -= 8
-                        if y < 0:
-                            y = display.HEIGHT - 8
-                    for i in range(5):
-                        for j in range(7):
-                            display.set_pixel(x + i, y + j, 0, 0, 0)
-            else:
-                # Render the character on the display
-                render_char(char, x, y, color)
-                x += 6
-                if x >= display.WIDTH:
+            if char:
+                if char == '\n':
+                    # Handle line breaks
                     x = 0
                     y += 8
                     if y >= display.HEIGHT:
                         y = 0
                         clear_display()
-            display.show()
+                elif char == '\b':
+                    # Handle backspace
+                    if x > 0:
+                        x -= 6
+                        if x < 0:
+                            x = display.WIDTH - 6
+                            y -= 8
+                            if y < 0:
+                                y = display.HEIGHT - 8
+                        for i in range(5):
+                            for j in range(7):
+                                display.set_pixel(x + i, y + j, 0, 0, 0)
+                else:
+                    # Render the character on the display
+                    clear_display()  # Clear the display before rendering the new character
+                    render_char(char, x, y, color)
+                    x += 6
+                    if x >= display.WIDTH:
+                        x = 0
+                        y += 8
+                        if y >= display.HEIGHT:
+                            y = 0
+                            clear_display()
+                display.show()
+            else:
+                time.sleep(0.1)  # Small delay when no input is available
     except KeyboardInterrupt:
         # Handle keyboard interrupt (Ctrl+C)
         clear_display()
+
 
 if __name__ == '__main__':
     main()
