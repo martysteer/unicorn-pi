@@ -3,7 +3,8 @@
 Animated Text Display for Unicorn HAT Mini
 
 A script that displays typed characters with various animation styles.
-Each keypress updates the display with the new character.
+Each keypress is immediately displayed on the Unicorn HAT Mini.
+Press Enter to clear the text buffer.
 
 Animation modes:
 - 'push': Each new character pushes in from the right, moving existing text left
@@ -18,6 +19,7 @@ Features:
 Usage:
     python typewriter.py --type [push|pop|marquee] [--speed SPEED]
 
+Press Enter to clear the buffer.
 Press Ctrl+C to exit.
 """
 
@@ -26,6 +28,10 @@ import time
 import random
 import math
 import argparse
+import termios
+import tty
+import fcntl
+import os
 import select
 from collections import deque
 
@@ -166,29 +172,31 @@ def get_random_color():
     b = random.randint(100, 255)
     return (r, g, b)
 
-def getch():
-    """Get a single character from stdin without requiring Enter"""
-    try:
-        # For Unix/Linux/MacOS
-        import termios
-        import tty
-        
-        fd = sys.stdin.fileno()
-        old_settings = termios.tcgetattr(fd)
-        try:
-            tty.setraw(fd)
-            ch = sys.stdin.read(1)
-        finally:
-            termios.tcsetattr(fd, termios.TCSADRAIN, old_settings)
-        return ch
-    except ImportError:
-        # For Windows
-        import msvcrt
-        return msvcrt.getch().decode('utf-8')
+def set_non_blocking_input():
+    """Set stdin to non-blocking mode"""
+    fd = sys.stdin.fileno()
+    old_flags = fcntl.fcntl(fd, fcntl.F_GETFL)
+    fcntl.fcntl(fd, fcntl.F_SETFL, old_flags | os.O_NONBLOCK)
+    return fd, old_flags
 
-def has_input():
-    """Check if there's input available without blocking"""
-    return select.select([sys.stdin], [], [], 0.0)[0]
+def restore_input(fd, old_flags):
+    """Restore stdin to original mode"""
+    fcntl.fcntl(fd, fcntl.F_SETFL, old_flags)
+
+def setup_terminal():
+    """Set terminal to raw mode for character-by-character input"""
+    fd = sys.stdin.fileno()
+    old_settings = termios.tcgetattr(fd)
+    tty.setraw(fd)
+    return fd, old_settings
+
+def restore_terminal(fd, old_settings):
+    """Restore terminal to original mode"""
+    termios.tcsetattr(fd, termios.TCSADRAIN, old_settings)
+
+def has_input(timeout=0.0):
+    """Check if input is available within timeout"""
+    return sys.stdin in select.select([sys.stdin], [], [], timeout)[0]
 
 def render_bitmap_char(display, char, position, color):
     """
@@ -223,7 +231,7 @@ def render_bitmap_char(display, char, position, color):
             # Check if bit is set (1), starting from MSB
             bit_position = CHAR_WIDTH - 1 - x
             if row_pattern & (1 << bit_position):
-                # Calculate the actual position on the display (rounded to nearest integer)
+                # Calculate the actual position on the display
                 pixel_x = int(x_pos + x)
                 pixel_y = int(y_pos + y)
                 
@@ -277,7 +285,7 @@ def animate_push(display, text_buffer, speed_factor=1.0):
         display.show()
         
         # Short delay between frames
-        time.sleep(0.02)
+        time.sleep(0.01)
 
 def animate_pop(display, text_buffer, speed_factor=1.0):
     """
@@ -329,7 +337,7 @@ def animate_pop(display, text_buffer, speed_factor=1.0):
         display.show()
         
         # Sleep for smooth animation
-        time.sleep(0.02)
+        time.sleep(0.01)
 
 def update_marquee(display, text_buffer, speed_factor=1.0):
     """
@@ -416,22 +424,37 @@ def main():
     
     print(f"Animated Text Display for Unicorn HAT Mini ({animation_mode} mode)")
     print(f"Animation speed: {speed_factor:.1f}x (use --speed option to adjust)")
-    print("Type characters to display them. Press Ctrl+C to exit.")
+    print("Type characters to display them. Press Enter to clear the buffer. Press Ctrl+C to exit.")
+    
+    # Setup terminal for raw input
+    term_fd, old_term_settings = setup_terminal()
     
     try:
         while True:
             current_time = time.time()
             
             # Check for input (non-blocking)
-            if has_input():
-                char = getch()
+            if has_input(0.0):
+                char = sys.stdin.read(1)
                 
                 # Check for Ctrl+C
                 if char and ord(char) == 3:
                     raise KeyboardInterrupt
                 
-                # Process the character
-                if char:
+                # Check for Enter key (clear buffer)
+                if char and (ord(char) == 13 or ord(char) == 10):  # CR or LF
+                    text_buffer.clear()
+                    sys.stdout.write('\r\n')
+                    sys.stdout.flush()
+                    
+                    # Clear display
+                    clear_display(display)
+                    
+                    # Skip the rest of the loop
+                    continue
+                
+                # Process other characters
+                if char and ord(char) >= 32:  # Only printable characters
                     # Generate a random color
                     color = get_random_color()
                     
@@ -461,6 +484,9 @@ def main():
     except KeyboardInterrupt:
         print("\nExiting...")
     finally:
+        # Restore terminal settings
+        restore_terminal(term_fd, old_term_settings)
+        
         # Clear the display
         clear_display(display)
         print("\nDisplay cleared.")
