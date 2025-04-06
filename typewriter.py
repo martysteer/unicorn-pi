@@ -17,7 +17,7 @@ Features:
 - Command-line arguments to select animation mode and adjust speeds
 
 Usage:
-    python typewriter.py --type [push|pop|marquee] [--speed SPEED]
+    python typewriter.py [--text "Initial text"] [--type [push|pop|marquee]] [--speed SPEED]
 
 Press Enter to clear the buffer.
 Press Ctrl+C to exit.
@@ -386,6 +386,11 @@ def parse_arguments():
     """Parse command-line arguments"""
     parser = argparse.ArgumentParser(description='Animated Text Display for Unicorn HAT Mini')
     
+    parser.add_argument('--text',
+                        type=str,
+                        default='HELLO WORLD',
+                        help='Initial text to display')
+    
     parser.add_argument('--type', '-t', 
                         choices=['push', 'pop', 'marquee'],
                         default='push',
@@ -398,7 +403,7 @@ def parse_arguments():
     
     parser.add_argument('--speed', '-s',
                         type=float,
-                        default=1.0,
+                        default=1.5,
                         help='Animation speed (higher value = faster animations)')
     
     return parser.parse_args()
@@ -418,12 +423,39 @@ def main():
     animation_mode = args.type
     speed_factor = args.speed
     
+    # Pre-populate the text buffer with the initial text if provided
+    if args.text:
+        for char in args.text:
+            if ord(char) >= 32:  # Only add printable characters
+                color = get_random_color()
+                text_buffer.add_char(char, color)
+        
+        # Draw the initial text based on the animation mode
+        if animation_mode == 'marquee':
+            # For marquee mode, just set the initial state
+            update_marquee(display, text_buffer, speed_factor)
+            last_update_time = time.time()
+        else:  # 'push' or 'pop'
+            # Show the text instantly (no animation for initial text)
+            max_visible = text_buffer.get_max_chars_visible()
+            visible_chars = text_buffer.chars[-max_visible:] if len(text_buffer.chars) > max_visible else text_buffer.chars
+            start_x = text_buffer.get_start_x()
+            
+            display.clear()
+            for i, (char, color) in enumerate(visible_chars):
+                x_pos = start_x + (i * text_buffer.char_unit)
+                if -CHAR_WIDTH < x_pos < display.get_shape()[0]:
+                    render_bitmap_char(display, char, (x_pos, text_buffer.y_position), color)
+            display.show()
+    
     # Initialize time tracking
     last_update_time = time.time()
     update_interval = 0.05 / speed_factor  # Base update interval
     
     print(f"Animated Text Display for Unicorn HAT Mini ({animation_mode} mode)")
     print(f"Animation speed: {speed_factor:.1f}x (use --speed option to adjust)")
+    if args.text:
+        print(f"Starting with initial text: {args.text}")
     print("Type characters to display them. Press Enter to clear the buffer. Press Ctrl+C to exit.")
     
     # Setup terminal for raw input
