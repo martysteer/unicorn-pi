@@ -26,6 +26,7 @@ import time
 import random
 import math
 import argparse
+import select
 from collections import deque
 
 # Try to import the Unicorn HAT Mini library
@@ -120,34 +121,49 @@ CHAR_WIDTH = 5  # Width of each character in pixels
 CHAR_HEIGHT = 5  # Height of each character in pixels
 CHAR_SPACING = 1  # Space between characters
 
+class TextBuffer:
+    """
+    A simple buffer class to manage text and its rendering.
+    """
+    def __init__(self, max_width):
+        self.chars = []  # List of (char, color) tuples
+        self.max_width = max_width
+        self.char_width = CHAR_WIDTH
+        self.char_spacing = CHAR_SPACING
+        self.char_unit = self.char_width + self.char_spacing
+        self.y_position = 1  # Vertical position (fixed for simplicity)
+        self.marquee_offset = 0.0
+    
+    def add_char(self, char, color):
+        """Add a character to the buffer with a color"""
+        self.chars.append((char, color))
+    
+    def get_text(self):
+        """Get the current text as a string"""
+        return ''.join(char for char, _ in self.chars)
+    
+    def get_max_chars_visible(self):
+        """Calculate how many characters can fit on screen"""
+        return (self.max_width + self.char_spacing) // self.char_unit
+    
+    def get_start_x(self):
+        """Calculate starting X position for right-aligned text"""
+        max_visible = self.get_max_chars_visible()
+        visible_chars = self.chars[-max_visible:] if len(self.chars) > max_visible else self.chars
+        total_width = len(visible_chars) * self.char_unit - self.char_spacing
+        return self.max_width - total_width
+    
+    def clear(self):
+        """Clear the buffer"""
+        self.chars = []
+        self.marquee_offset = 0.0
+
 def get_random_color():
     """Generate a vibrant random RGB color"""
     # Use more vibrant colors by avoiding dark/low values
     r = random.randint(100, 255)
     g = random.randint(100, 255)
     b = random.randint(100, 255)
-    return (r, g, b)
-
-def interpolate_colors(color1, color2, factor):
-    """
-    Linearly interpolate between two colors
-    
-    Args:
-        color1: First RGB color tuple
-        color2: Second RGB color tuple
-        factor: Value between 0.0 and 1.0 (0 = color1, 1 = color2)
-        
-    Returns:
-        Interpolated RGB color tuple
-    """
-    # Ensure factor is between 0 and 1
-    factor = max(0.0, min(1.0, factor))
-    
-    # Interpolate each component
-    r = int(color1[0] + (color2[0] - color1[0]) * factor)
-    g = int(color1[1] + (color2[1] - color1[1]) * factor)
-    b = int(color1[2] + (color2[2] - color1[2]) * factor)
-    
     return (r, g, b)
 
 def getch():
@@ -169,6 +185,10 @@ def getch():
         # For Windows
         import msvcrt
         return msvcrt.getch().decode('utf-8')
+
+def has_input():
+    """Check if there's input available without blocking"""
+    return select.select([sys.stdin], [], [], 0.0)[0]
 
 def render_bitmap_char(display, char, position, color):
     """
@@ -204,8 +224,8 @@ def render_bitmap_char(display, char, position, color):
             bit_position = CHAR_WIDTH - 1 - x
             if row_pattern & (1 << bit_position):
                 # Calculate the actual position on the display (rounded to nearest integer)
-                pixel_x = int(x_pos + x + 0.5)
-                pixel_y = int(y_pos + y + 0.5)
+                pixel_x = int(x_pos + x)
+                pixel_y = int(y_pos + y)
                 
                 # Check if the pixel is within display bounds
                 if 0 <= pixel_x < display.get_shape()[0] and 0 <= pixel_y < display.get_shape()[1]:
@@ -216,163 +236,143 @@ def clear_display(display):
     display.clear()
     display.show()
 
-def animate_push(display, char_queue, speed_factor=1.0):
+def animate_push(display, text_buffer, speed_factor=1.0):
     """
-    Animate a new character pushing in from the right with smooth motion
+    Animate a new character pushing in from the right
     
     Args:
         display: UnicornHATMini instance
-        char_queue: List of (char, color) tuples
-        speed_factor: Speed multiplier (lower is slower)
+        text_buffer: TextBuffer instance
+        speed_factor: Speed multiplier (higher is faster)
     """
-    width, height = display.get_shape()
-    
-    # Calculate the total width of the character sequence
-    total_width = len(char_queue) * (CHAR_WIDTH + CHAR_SPACING) - CHAR_SPACING
+    max_visible = text_buffer.get_max_chars_visible()
+    visible_chars = text_buffer.chars[-max_visible:] if len(text_buffer.chars) > max_visible else text_buffer.chars
+    start_x = text_buffer.get_start_x()
     
     # Number of animation steps (more steps = smoother animation)
-    steps = int(20 / speed_factor)  # Increased steps for smoother animation
+    steps = int(15 / speed_factor)
     
     # Animate the push
-    for step in range(steps + 1):  # +1 to ensure we reach the final position
-        display.clear()
-        
+    for step in range(steps + 1):
         # Calculate progress factor (0.0 to 1.0)
         progress = step / steps
         
-        # Use easing function for smoother motion
-        # This creates a slight ease-in, ease-out effect
-        ease_factor = 0.5 - 0.5 * math.cos(progress * math.pi)
+        # Clear the display
+        display.clear()
         
-        # Calculate offset for this animation step
-        offset = (CHAR_WIDTH + CHAR_SPACING) * (1.0 - ease_factor)
-        
-        # Draw each character at its offset position
-        for i, (char, color) in enumerate(char_queue):
-            # Calculate the x position for this character
-            x_pos = width - total_width + (i * (CHAR_WIDTH + CHAR_SPACING)) - offset
+        # Draw characters with animated positions
+        for i, (char, color) in enumerate(visible_chars):
+            # Calculate position with easing
+            ease = 0.5 - 0.5 * math.cos(progress * math.pi)
+            offset = (1.0 - ease) * text_buffer.char_unit
             
-            # Only draw if it's at least partially on screen
-            if x_pos + CHAR_WIDTH > 0:
-                render_bitmap_char(display, char, (x_pos, 1), color)
+            # Calculate final x position
+            x_pos = start_x + (i * text_buffer.char_unit) - offset
+            
+            # Only draw if at least partially on screen
+            if -CHAR_WIDTH < x_pos < display.get_shape()[0]:
+                render_bitmap_char(display, char, (x_pos, text_buffer.y_position), color)
         
         # Update the display
         display.show()
         
-        # Sleep longer for slower animation (adjusted by speed_factor)
-        time.sleep(0.01 / speed_factor)
+        # Short delay between frames
+        time.sleep(0.02)
 
-def animate_pop(display, char_queue, speed_factor=1.0):
+def animate_pop(display, text_buffer, speed_factor=1.0):
     """
-    Animate a new character appearing from the right with a smooth transition
+    Animate characters appearing one by one
     
     Args:
         display: UnicornHATMini instance
-        char_queue: List of (char, color) tuples
-        speed_factor: Speed multiplier (lower is slower)
+        text_buffer: TextBuffer instance
+        speed_factor: Speed multiplier (higher is faster)
     """
-    width, height = display.get_shape()
-    
-    # Calculate how many characters we can fit on screen
-    max_chars = (width + CHAR_SPACING) // (CHAR_WIDTH + CHAR_SPACING)
-    
-    # Take only the characters that will fit on screen
-    visible_chars = char_queue[-max_chars:] if len(char_queue) > max_chars else char_queue
-    
-    # Calculate the total width of the visible character sequence
-    total_width = len(visible_chars) * (CHAR_WIDTH + CHAR_SPACING) - CHAR_SPACING
-    
-    # Previous positions (for smooth transition)
-    prev_positions = {}
+    max_visible = text_buffer.get_max_chars_visible()
+    visible_chars = text_buffer.chars[-max_visible:] if len(text_buffer.chars) > max_visible else text_buffer.chars
+    start_x = text_buffer.get_start_x()
     
     # Number of animation steps
     steps = int(15 / speed_factor)
     
-    # First, get the final positions
-    final_positions = {}
-    for i, (char, _) in enumerate(visible_chars):
-        final_positions[char] = width - total_width + (i * (CHAR_WIDTH + CHAR_SPACING))
-    
-    # For each animation step
-    for step in range(steps + 1):  # +1 to ensure we reach the final position
-        display.clear()
-        
+    # Animate each character's appearance
+    for step in range(steps + 1):
         # Calculate progress factor (0.0 to 1.0)
         progress = step / steps
         
-        # Use easing function for smoother motion
-        ease_factor = 0.5 - 0.5 * math.cos(progress * math.pi)
+        # Apply easing function for smoother motion
+        ease = 0.5 - 0.5 * math.cos(progress * math.pi)
         
-        # Draw each character with interpolated position
+        # Clear the display
+        display.clear()
+        
+        # Draw each character
         for i, (char, color) in enumerate(visible_chars):
-            # Get final position
-            final_x = final_positions[char]
+            # Each character's final position
+            final_x = start_x + (i * text_buffer.char_unit)
             
-            # If this is a new character, start it from off-screen
-            if char not in prev_positions:
-                prev_positions[char] = width
+            # For the newly added character, animate it in from the right
+            if i == len(visible_chars) - 1:
+                # Start from off-screen right
+                start_pos = display.get_shape()[0]
+                # Calculate current position
+                x_pos = start_pos + (final_x - start_pos) * ease
+            else:
+                # All other characters stay in place
+                x_pos = final_x
             
-            # Interpolate position
-            current_x = prev_positions[char] + (final_x - prev_positions[char]) * ease_factor
-            
-            # Render the character
-            render_bitmap_char(display, char, (current_x, 1), color)
+            # Only draw if at least partially on screen
+            if -CHAR_WIDTH < x_pos < display.get_shape()[0]:
+                render_bitmap_char(display, char, (x_pos, text_buffer.y_position), color)
         
         # Update the display
         display.show()
         
-        # Sleep longer for slower animation
-        time.sleep(0.01 / speed_factor)
-    
-    # Update previous positions for next animation
-    prev_positions = final_positions.copy()
+        # Sleep for smooth animation
+        time.sleep(0.02)
 
-def animate_marquee(display, text, colors, offset, speed_factor=1.0):
+def update_marquee(display, text_buffer, speed_factor=1.0):
     """
-    Animate a continuous scrolling marquee effect with smooth motion
+    Update the marquee scroll animation
     
     Args:
         display: UnicornHATMini instance
-        text: String of characters to display
-        colors: List of colors corresponding to each character
-        offset: Current pixel offset for the animation
-        speed_factor: Speed multiplier (lower is slower)
-        
-    Returns:
-        New offset value
+        text_buffer: TextBuffer instance
+        speed_factor: Speed multiplier (higher is faster)
     """
-    width, height = display.get_shape()
+    # If no characters, just return
+    if not text_buffer.chars:
+        display.clear()
+        display.show()
+        return
     
-    # Calculate the total width of the text (including inter-character spacing)
-    total_width = len(text) * (CHAR_WIDTH + CHAR_SPACING) - CHAR_SPACING
+    # Calculate the total width of all characters (for wrapping)
+    total_width = len(text_buffer.chars) * text_buffer.char_unit
+    
+    # Increment marquee offset
+    text_buffer.marquee_offset += 0.5 * speed_factor
+    # Wrap around when needed
+    if text_buffer.marquee_offset >= total_width:
+        text_buffer.marquee_offset = 0.0
     
     # Clear the display
     display.clear()
     
-    # Draw each character at its offset position
-    for i, char in enumerate(text):
-        # Calculate the x position for this character with wrapping
-        char_offset = (i * (CHAR_WIDTH + CHAR_SPACING) - offset) % total_width
+    # Draw each character at its scrolled position
+    for i, (char, color) in enumerate(text_buffer.chars):
+        # Calculate base position for scrolling
+        x_pos = i * text_buffer.char_unit - text_buffer.marquee_offset
         
-        # When we've wrapped around, add the total width to ensure continuity
-        if char_offset < 0:
-            char_offset += total_width
-            
-        # Convert to screen position (start outside the right edge)
-        x_pos = width + char_offset - total_width
+        # Wrap around for continuous scrolling
+        if x_pos < -text_buffer.char_width:
+            x_pos += total_width
         
-        # Only draw if it's at least partially on screen
-        if -CHAR_WIDTH < x_pos < width:
-            render_bitmap_char(display, char, (x_pos, 1), colors[i])
+        # Only draw if at least partially on screen
+        if -CHAR_WIDTH < x_pos < display.get_shape()[0]:
+            render_bitmap_char(display, char, (x_pos, text_buffer.y_position), color)
     
     # Update the display
     display.show()
-    
-    # Increment and wrap the offset (slower with lower speed_factor)
-    offset = (offset + 0.2 / speed_factor) % total_width
-    
-    # Return the new offset
-    return offset
 
 def parse_arguments():
     """Parse command-line arguments"""
@@ -391,91 +391,73 @@ def parse_arguments():
     parser.add_argument('--speed', '-s',
                         type=float,
                         default=1.0,
-                        help='Animation speed (lower value = slower animations)')
+                        help='Animation speed (higher value = faster animations)')
     
     return parser.parse_args()
 
 def main():
-    # Import math for easing functions
-    import math
-    
     # Parse command-line arguments
     args = parse_arguments()
     
     # Initialize the Unicorn HAT Mini
     display = UnicornHATMini()
+    width, height = display.get_shape()
     display.set_brightness(args.brightness)
     clear_display(display)
     
-    # Initialize text state
-    char_queue = []  # List of (char, color) tuples
-    marquee_offset = 0.0  # Using float for smoother motion
+    # Initialize the text buffer
+    text_buffer = TextBuffer(width)
     animation_mode = args.type
-    speed_factor = args.speed  # Animation speed factor
+    speed_factor = args.speed
+    
+    # Initialize time tracking
+    last_update_time = time.time()
+    update_interval = 0.05 / speed_factor  # Base update interval
     
     print(f"Animated Text Display for Unicorn HAT Mini ({animation_mode} mode)")
     print(f"Animation speed: {speed_factor:.1f}x (use --speed option to adjust)")
     print("Type characters to display them. Press Ctrl+C to exit.")
     
-    # For marquee mode, we need to handle animation continuously
-    marquee_last_update = time.time()
-    marquee_update_interval = 0.03 / speed_factor  # Using speed factor for marquee interval
-    
     try:
         while True:
-            # Check for keyboard input (non-blocking)
-            if animation_mode == 'marquee' and char_queue:
-                # For marquee mode, we need to continuously update even without input
-                import select
-                if select.select([sys.stdin], [], [], 0.0)[0]:
-                    char = getch()
-                    has_input = True
-                else:
-                    char = None
-                    has_input = False
-                    
-                # Update marquee animation at regular intervals
-                current_time = time.time()
-                if current_time - marquee_last_update >= marquee_update_interval:
-                    # Convert char_queue to strings and color lists for the marquee function
-                    text = ''.join(c for c, _ in char_queue)
-                    colors = [color for _, color in char_queue]
-                    
-                    # Update the marquee animation
-                    marquee_offset = animate_marquee(display, text, colors, marquee_offset, speed_factor)
-                    marquee_last_update = current_time
-            else:
-                # For other modes, we wait for input
-                char = getch()
-                has_input = True
+            current_time = time.time()
             
-            # Process input if we have it
-            if has_input:
-                # Check for Ctrl+C (ASCII value 3)
+            # Check for input (non-blocking)
+            if has_input():
+                char = getch()
+                
+                # Check for Ctrl+C
                 if char and ord(char) == 3:
                     raise KeyboardInterrupt
                 
+                # Process the character
                 if char:
-                    # Generate a random color for this character
+                    # Generate a random color
                     color = get_random_color()
                     
-                    # Add the character to the queue
-                    char_queue.append((char, color))
+                    # Add character to the buffer
+                    text_buffer.add_char(char, color)
                     
-                    # Echo the character to the terminal with color info
-                    sys.stdout.write(f"{char} [RGB: {color[0]},{color[1]},{color[2]}]\n")
+                    # Echo character to terminal
+                    sys.stdout.write(char)
                     sys.stdout.flush()
                     
-                    # Animate based on the selected mode
+                    # Apply animation based on mode
                     if animation_mode == 'push':
-                        animate_push(display, char_queue, speed_factor)
+                        animate_push(display, text_buffer, speed_factor)
+                        last_update_time = current_time  # Reset the timer
                     elif animation_mode == 'pop':
-                        animate_pop(display, char_queue, speed_factor)
-                    # For marquee mode, the animation is handled above
+                        animate_pop(display, text_buffer, speed_factor)
+                        last_update_time = current_time  # Reset the timer
             
-            # Add a small delay to prevent CPU hogging
+            # For marquee mode, update continuously
+            if animation_mode == 'marquee' and current_time - last_update_time >= update_interval:
+                update_marquee(display, text_buffer, speed_factor)
+                last_update_time = current_time
+            
+            # Sleep a tiny bit to prevent CPU hogging
             time.sleep(0.01)
-            
+    
     except KeyboardInterrupt:
         print("\nExiting...")
     finally:
