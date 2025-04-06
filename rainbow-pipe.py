@@ -86,6 +86,9 @@ def parse_arguments():
     parser.add_argument('--no-stdin', action='store_true',
                        help='Disable stdin input (only show initial text)')
     
+    parser.add_argument('--system-font', action='store_true',
+                       help='Use system font instead of the custom pixel font')
+    
     return parser.parse_args()
 
 
@@ -138,6 +141,83 @@ class StdinReader(threading.Thread):
             self.stop_event.set()
 
 
+class CustomPixelFont:
+    """A custom pixel font for rendering text on small displays."""
+    
+    def __init__(self):
+        """Initialize the custom pixel font."""
+        self.char_width = 3  # Width of each character in pixels
+        self.char_height = 5  # Height of each character in pixels
+        self.char_spacing = 1  # Spacing between characters
+        self.bitmap_font = create_pixel_bitmap_font()
+    
+    def getbbox(self, text):
+        """Get the bounding box of text for PIL compatibility.
+        
+        Args:
+            text: The text to measure
+            
+        Returns:
+            Tuple of (left, top, right, bottom)
+        """
+        # Calculate the width of the text
+        width = 0
+        for char in text:
+            if char.upper() in self.bitmap_font:
+                width += self.char_width + self.char_spacing
+        
+        # Remove the last character spacing if there's text
+        if width > 0:
+            width -= self.char_spacing
+            
+        # Return bounding box (left, top, right, bottom)
+        return (0, 0, width, self.char_height)
+    
+    def getsize(self, text):
+        """Get the size of text for PIL compatibility.
+        
+        Args:
+            text: The text to measure
+            
+        Returns:
+            Tuple of (width, height)
+        """
+        # Use getbbox and convert to size
+        left, top, right, bottom = self.getbbox(text)
+        return (right - left, bottom - top)
+    
+    def render_text(self, draw, text, position, color=(255, 255, 255)):
+        """Render text at the specified position.
+        
+        Args:
+            draw: PIL ImageDraw object
+            text: Text to render
+            position: (x, y) position to draw at
+            color: Color to use for the text
+        """
+        x, y = position
+        
+        # Convert text to uppercase for simplicity
+        text = text.upper()
+        
+        # Draw each character
+        for char in text:
+            if char in self.bitmap_font:
+                # Get the bitmap for this character
+                bitmap = self.bitmap_font[char]
+                
+                # Draw each pixel of the character
+                for cy in range(self.char_height):
+                    for cx in range(self.char_width):
+                        if cy < len(bitmap) and cx < len(bitmap[cy]) and bitmap[cy][cx] == 1:
+                            draw.point((x + cx, y + cy), fill=color)
+                
+                # Move to the next character position
+                x += self.char_width + self.char_spacing
+            else:
+                # Skip unknown characters
+                x += self.char_width + self.char_spacing
+
 class RainbowTextPipe:
     """Controls the scrolling text display and handles input from stdin."""
     
@@ -152,6 +232,7 @@ class RainbowTextPipe:
         self.separator = separator
         self.use_stdin = use_stdin
         self.scroll_x = 0
+        self.use_custom_pixel_font = True  # Set to True to use the custom pixel font
         
         # Scrolling parameters
         self.speed_settings = {
@@ -166,7 +247,7 @@ class RainbowTextPipe:
         self.gap_width = self.width  # One screen width gap
         
         # Text baseline position (vertical centering)
-        self.baseline_y = (self.height - 5) // 2  # Default to vertically centered
+        self.baseline_y = (self.height // 2)  # Default to vertically centered
         
         # Color effects
         self.color_modes = ['static_rainbow', 'wave', 'pulse', 'random_flash']
@@ -199,19 +280,51 @@ class RainbowTextPipe:
     
     def setup_font(self):
         """Set up the font for text rendering."""
-        # Load a font
-        try:
-            if self.font_path:
-                self.font = ImageFont.truetype(self.font_path, 8)
-            else:
-                # Try to load a system font, fall back to default if not available
+        # Check if we should use the custom pixel font
+        if self.use_custom_pixel_font:
+            print("Using custom pixel font")
+            self.font = CustomPixelFont()
+        else:
+            # Load a font
+            try:
+                if self.font_path:
+                    self.font = ImageFont.truetype(self.font_path, 8)
+                else:
+                    # Try to load a pixel font, with fallbacks for different systems
+                    font_paths = [
+                        # Common pixel fonts on Linux
+                        "/usr/share/fonts/truetype/dejavu/DejaVuSansMono.ttf",
+                        "/usr/share/fonts/TTF/DejaVuSansMono.ttf",
+                        # Custom smaller pixel font size
+                        "/usr/share/fonts/truetype/piboto/PibotoLt-Regular.ttf",
+                        # Try Raspberry Pi specific fonts
+                        "/usr/share/fonts/truetype/piboto/Piboto-Regular.ttf",
+                        # Fall back to smaller DejaVu 
+                        "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"
+                    ]
+                    
+                    for path in font_paths:
+                        try:
+                            # Use a smaller font size for cleaner pixel display
+                            self.font = ImageFont.truetype(path, 6)
+                            print(f"Using font: {path}")
+                            break
+                        except IOError:
+                            continue
+                    else:
+                        # If no font was loaded, load a clean custom pixel font
+                        try:
+                            # For newer PIL versions - load default but with smaller size
+                            self.font = ImageFont.load_default().font_variant(size=6)
+                        except (AttributeError, TypeError):
+                            self.font = ImageFont.load_default()
+            except Exception as e:
+                print(f"Font error: {e}")
                 try:
-                    self.font = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf", 8)
-                except IOError:
+                    # For newer PIL versions - load default but with smaller size
+                    self.font = ImageFont.load_default().font_variant(size=6)
+                except (AttributeError, TypeError):
                     self.font = ImageFont.load_default()
-        except Exception as e:
-            print(f"Font error: {e}")
-            self.font = ImageFont.load_default()
         
         # Create initial text image
         self.update_text_image()
@@ -220,13 +333,26 @@ class RainbowTextPipe:
         """Update the text image with the current text."""
         # Measure the size of our text
         try:
-            # For newer PIL versions
-            left, top, right, bottom = self.font.getbbox(self.text)
-            self.text_width = right - left
-            self.text_height = bottom - top
-        except AttributeError:
-            # Fallback for older PIL versions
-            self.text_width, self.text_height = self.font.getsize(self.text)
+            if isinstance(self.font, CustomPixelFont):
+                # Use our custom pixel font methods
+                left, top, right, bottom = self.font.getbbox(self.text)
+                self.text_width = right - left
+                self.text_height = bottom - top
+            else:
+                # For PIL fonts
+                try:
+                    # For newer PIL versions
+                    left, top, right, bottom = self.font.getbbox(self.text)
+                    self.text_width = right - left
+                    self.text_height = bottom - top
+                except AttributeError:
+                    # Fallback for older PIL versions
+                    self.text_width, self.text_height = self.font.getsize(self.text)
+        except Exception as e:
+            print(f"Error measuring text: {e}")
+            # Fallback values
+            self.text_width = len(self.text) * 5
+            self.text_height = 5
         
         # Create a buffer that's just the size needed for the text
         self.text_image = Image.new("RGB", (max(self.text_width, 1), self.height), (0, 0, 0))
@@ -234,7 +360,14 @@ class RainbowTextPipe:
         
         # Draw the text in the buffer
         y_position = self.baseline_y - self.text_height // 2
-        draw.text((0, y_position), self.text, font=self.font, fill=(255, 255, 255))
+        
+        if isinstance(self.font, CustomPixelFont):
+            # Use our custom pixel font renderer
+            self.font.render_text(draw, self.text, (0, y_position), (255, 255, 255))
+        else:
+            # Use PIL's text rendering with pixel-perfect mode
+            draw.fontmode = "1"  # Use "1" instead of "L" for binary font mode (no antialiasing)
+            draw.text((0, y_position), self.text, font=self.font, fill=(255, 255, 255))
         
         # Reset scroll position if we're already at the beginning
         if self.scroll_x <= 0:
@@ -456,6 +589,513 @@ class RainbowTextPipe:
             clear_display(self.display)
             print("Display cleared")
 
+
+def create_pixel_bitmap_font():
+    """Create a basic 5x3 pixel bitmap font that works well on small displays.
+    
+    Returns:
+        A dictionary mapping characters to their bitmap representations.
+    """
+    # Define a minimal 5x3 pixel font (height x width)
+    # 1 means pixel on, 0 means pixel off
+    font = {
+        'A': [
+            [0, 1, 0],
+            [1, 0, 1],
+            [1, 1, 1],
+            [1, 0, 1],
+            [1, 0, 1]
+        ],
+        'B': [
+            [1, 1, 0],
+            [1, 0, 1],
+            [1, 1, 0],
+            [1, 0, 1],
+            [1, 1, 0]
+        ],
+        'C': [
+            [0, 1, 1],
+            [1, 0, 0],
+            [1, 0, 0],
+            [1, 0, 0],
+            [0, 1, 1]
+        ],
+        'D': [
+            [1, 1, 0],
+            [1, 0, 1],
+            [1, 0, 1],
+            [1, 0, 1],
+            [1, 1, 0]
+        ],
+        'E': [
+            [1, 1, 1],
+            [1, 0, 0],
+            [1, 1, 0],
+            [1, 0, 0],
+            [1, 1, 1]
+        ],
+        'F': [
+            [1, 1, 1],
+            [1, 0, 0],
+            [1, 1, 0],
+            [1, 0, 0],
+            [1, 0, 0]
+        ],
+        'G': [
+            [0, 1, 1],
+            [1, 0, 0],
+            [1, 0, 1],
+            [1, 0, 1],
+            [0, 1, 1]
+        ],
+        'H': [
+            [1, 0, 1],
+            [1, 0, 1],
+            [1, 1, 1],
+            [1, 0, 1],
+            [1, 0, 1]
+        ],
+        'I': [
+            [1, 1, 1],
+            [0, 1, 0],
+            [0, 1, 0],
+            [0, 1, 0],
+            [1, 1, 1]
+        ],
+        'J': [
+            [0, 0, 1],
+            [0, 0, 1],
+            [0, 0, 1],
+            [1, 0, 1],
+            [0, 1, 0]
+        ],
+        'K': [
+            [1, 0, 1],
+            [1, 0, 1],
+            [1, 1, 0],
+            [1, 0, 1],
+            [1, 0, 1]
+        ],
+        'L': [
+            [1, 0, 0],
+            [1, 0, 0],
+            [1, 0, 0],
+            [1, 0, 0],
+            [1, 1, 1]
+        ],
+        'M': [
+            [1, 0, 1],
+            [1, 1, 1],
+            [1, 0, 1],
+            [1, 0, 1],
+            [1, 0, 1]
+        ],
+        'N': [
+            [1, 0, 1],
+            [1, 1, 1],
+            [1, 1, 1],
+            [1, 0, 1],
+            [1, 0, 1]
+        ],
+        'O': [
+            [0, 1, 0],
+            [1, 0, 1],
+            [1, 0, 1],
+            [1, 0, 1],
+            [0, 1, 0]
+        ],
+        'P': [
+            [1, 1, 0],
+            [1, 0, 1],
+            [1, 1, 0],
+            [1, 0, 0],
+            [1, 0, 0]
+        ],
+        'Q': [
+            [0, 1, 0],
+            [1, 0, 1],
+            [1, 0, 1],
+            [1, 0, 1],
+            [0, 1, 1]
+        ],
+        'R': [
+            [1, 1, 0],
+            [1, 0, 1],
+            [1, 1, 0],
+            [1, 0, 1],
+            [1, 0, 1]
+        ],
+        'S': [
+            [0, 1, 1],
+            [1, 0, 0],
+            [0, 1, 0],
+            [0, 0, 1],
+            [1, 1, 0]
+        ],
+        'T': [
+            [1, 1, 1],
+            [0, 1, 0],
+            [0, 1, 0],
+            [0, 1, 0],
+            [0, 1, 0]
+        ],
+        'U': [
+            [1, 0, 1],
+            [1, 0, 1],
+            [1, 0, 1],
+            [1, 0, 1],
+            [0, 1, 0]
+        ],
+        'V': [
+            [1, 0, 1],
+            [1, 0, 1],
+            [1, 0, 1],
+            [0, 1, 0],
+            [0, 1, 0]
+        ],
+        'W': [
+            [1, 0, 1],
+            [1, 0, 1],
+            [1, 0, 1],
+            [1, 1, 1],
+            [1, 0, 1]
+        ],
+        'X': [
+            [1, 0, 1],
+            [1, 0, 1],
+            [0, 1, 0],
+            [1, 0, 1],
+            [1, 0, 1]
+        ],
+        'Y': [
+            [1, 0, 1],
+            [1, 0, 1],
+            [0, 1, 0],
+            [0, 1, 0],
+            [0, 1, 0]
+        ],
+        'Z': [
+            [1, 1, 1],
+            [0, 0, 1],
+            [0, 1, 0],
+            [1, 0, 0],
+            [1, 1, 1]
+        ],
+        '0': [
+            [0, 1, 0],
+            [1, 0, 1],
+            [1, 0, 1],
+            [1, 0, 1],
+            [0, 1, 0]
+        ],
+        '1': [
+            [0, 1, 0],
+            [1, 1, 0],
+            [0, 1, 0],
+            [0, 1, 0],
+            [1, 1, 1]
+        ],
+        '2': [
+            [1, 1, 0],
+            [0, 0, 1],
+            [0, 1, 0],
+            [1, 0, 0],
+            [1, 1, 1]
+        ],
+        '3': [
+            [1, 1, 0],
+            [0, 0, 1],
+            [0, 1, 0],
+            [0, 0, 1],
+            [1, 1, 0]
+        ],
+        '4': [
+            [1, 0, 1],
+            [1, 0, 1],
+            [1, 1, 1],
+            [0, 0, 1],
+            [0, 0, 1]
+        ],
+        '5': [
+            [1, 1, 1],
+            [1, 0, 0],
+            [1, 1, 0],
+            [0, 0, 1],
+            [1, 1, 0]
+        ],
+        '6': [
+            [0, 1, 1],
+            [1, 0, 0],
+            [1, 1, 0],
+            [1, 0, 1],
+            [0, 1, 0]
+        ],
+        '7': [
+            [1, 1, 1],
+            [0, 0, 1],
+            [0, 1, 0],
+            [0, 1, 0],
+            [0, 1, 0]
+        ],
+        '8': [
+            [0, 1, 0],
+            [1, 0, 1],
+            [0, 1, 0],
+            [1, 0, 1],
+            [0, 1, 0]
+        ],
+        '9': [
+            [0, 1, 0],
+            [1, 0, 1],
+            [0, 1, 1],
+            [0, 0, 1],
+            [0, 1, 0]
+        ],
+        ' ': [
+            [0, 0, 0],
+            [0, 0, 0],
+            [0, 0, 0],
+            [0, 0, 0],
+            [0, 0, 0]
+        ],
+        '.': [
+            [0, 0, 0],
+            [0, 0, 0],
+            [0, 0, 0],
+            [0, 0, 0],
+            [0, 1, 0]
+        ],
+        ',': [
+            [0, 0, 0],
+            [0, 0, 0],
+            [0, 0, 0],
+            [0, 1, 0],
+            [1, 0, 0]
+        ],
+        '!': [
+            [0, 1, 0],
+            [0, 1, 0],
+            [0, 1, 0],
+            [0, 0, 0],
+            [0, 1, 0]
+        ],
+        '?': [
+            [1, 1, 0],
+            [0, 0, 1],
+            [0, 1, 0],
+            [0, 0, 0],
+            [0, 1, 0]
+        ],
+        ':': [
+            [0, 0, 0],
+            [0, 1, 0],
+            [0, 0, 0],
+            [0, 1, 0],
+            [0, 0, 0]
+        ],
+        ';': [
+            [0, 0, 0],
+            [0, 1, 0],
+            [0, 0, 0],
+            [0, 1, 0],
+            [1, 0, 0]
+        ],
+        '-': [
+            [0, 0, 0],
+            [0, 0, 0],
+            [1, 1, 1],
+            [0, 0, 0],
+            [0, 0, 0]
+        ],
+        '+': [
+            [0, 0, 0],
+            [0, 1, 0],
+            [1, 1, 1],
+            [0, 1, 0],
+            [0, 0, 0]
+        ],
+        '*': [
+            [0, 0, 0],
+            [1, 0, 1],
+            [0, 1, 0],
+            [1, 0, 1],
+            [0, 0, 0]
+        ],
+        '/': [
+            [0, 0, 1],
+            [0, 0, 1],
+            [0, 1, 0],
+            [1, 0, 0],
+            [1, 0, 0]
+        ],
+        '\\': [
+            [1, 0, 0],
+            [1, 0, 0],
+            [0, 1, 0],
+            [0, 0, 1],
+            [0, 0, 1]
+        ],
+        '_': [
+            [0, 0, 0],
+            [0, 0, 0],
+            [0, 0, 0],
+            [0, 0, 0],
+            [1, 1, 1]
+        ],
+        '=': [
+            [0, 0, 0],
+            [1, 1, 1],
+            [0, 0, 0],
+            [1, 1, 1],
+            [0, 0, 0]
+        ],
+        '(': [
+            [0, 1, 0],
+            [1, 0, 0],
+            [1, 0, 0],
+            [1, 0, 0],
+            [0, 1, 0]
+        ],
+        ')': [
+            [0, 1, 0],
+            [0, 0, 1],
+            [0, 0, 1],
+            [0, 0, 1],
+            [0, 1, 0]
+        ],
+        '[': [
+            [1, 1, 0],
+            [1, 0, 0],
+            [1, 0, 0],
+            [1, 0, 0],
+            [1, 1, 0]
+        ],
+        ']': [
+            [0, 1, 1],
+            [0, 0, 1],
+            [0, 0, 1],
+            [0, 0, 1],
+            [0, 1, 1]
+        ],
+        '{': [
+            [0, 1, 1],
+            [0, 1, 0],
+            [1, 0, 0],
+            [0, 1, 0],
+            [0, 1, 1]
+        ],
+        '}': [
+            [1, 1, 0],
+            [0, 1, 0],
+            [0, 0, 1],
+            [0, 1, 0],
+            [1, 1, 0]
+        ],
+        '<': [
+            [0, 0, 1],
+            [0, 1, 0],
+            [1, 0, 0],
+            [0, 1, 0],
+            [0, 0, 1]
+        ],
+        '>': [
+            [1, 0, 0],
+            [0, 1, 0],
+            [0, 0, 1],
+            [0, 1, 0],
+            [1, 0, 0]
+        ],
+        '|': [
+            [0, 1, 0],
+            [0, 1, 0],
+            [0, 1, 0],
+            [0, 1, 0],
+            [0, 1, 0]
+        ],
+        '^': [
+            [0, 1, 0],
+            [1, 0, 1],
+            [0, 0, 0],
+            [0, 0, 0],
+            [0, 0, 0]
+        ],
+        '&': [
+            [0, 1, 0],
+            [1, 0, 1],
+            [0, 1, 0],
+            [1, 0, 1],
+            [0, 1, 1]
+        ],
+        '@': [
+            [0, 1, 0],
+            [1, 0, 1],
+            [1, 1, 1],
+            [1, 0, 0],
+            [0, 1, 1]
+        ],
+        '#': [
+            [1, 0, 1],
+            [1, 1, 1],
+            [1, 0, 1],
+            [1, 1, 1],
+            [1, 0, 1]
+        ],
+        '%': [
+            [1, 0, 1],
+            [0, 0, 1],
+            [0, 1, 0],
+            [1, 0, 0],
+            [1, 0, 1]
+        ],
+        '~': [
+            [0, 0, 0],
+            [0, 1, 0],
+            [1, 0, 1],
+            [0, 0, 0],
+            [0, 0, 0]
+        ],
+        '`': [
+            [1, 0, 0],
+            [0, 1, 0],
+            [0, 0, 0],
+            [0, 0, 0],
+            [0, 0, 0]
+        ],
+        "'": [
+            [0, 1, 0],
+            [0, 1, 0],
+            [0, 0, 0],
+            [0, 0, 0],
+            [0, 0, 0]
+        ],
+        '"': [
+            [1, 0, 1],
+            [1, 0, 1],
+            [0, 0, 0],
+            [0, 0, 0],
+            [0, 0, 0]
+        ],
+        '•': [
+            [0, 0, 0],
+            [0, 1, 0],
+            [1, 1, 1],
+            [0, 1, 0],
+            [0, 0, 0]
+        ],
+        '>': [
+            [1, 0, 0],
+            [0, 1, 0],
+            [0, 0, 1],
+            [0, 1, 0],
+            [1, 0, 0]
+        ]
+    }
+    
+    # Add lowercase letters (same as uppercase for simplicity)
+    for char in list('abcdefghijklmnopqrstuvwxyz'):
+        font[char] = font[char.upper()]
+        
+    return font
 
 def main():
     """Main function to run the rainbow text pipe."""
