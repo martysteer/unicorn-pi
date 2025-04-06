@@ -256,7 +256,7 @@ class RainbowPipeScroller:
         self.gap_width = gap_width
         
         # Text baseline position (vertical centering)
-        self.baseline_y = (self.height - 5) // 2  # Default to vertically centered
+        self.baseline_y = self.height // 2  # Default to vertically centered
         
         # Color effects
         self.color_modes = ['static_rainbow', 'wave', 'pulse', 'random_flash']
@@ -285,19 +285,24 @@ class RainbowPipeScroller:
     
     def setup_font(self):
         """Set up the font for text rendering."""
-        # Load a font
-        try:
-            if self.font_path:
-                self.font = ImageFont.truetype(self.font_path, 8)
-            else:
-                # Try to load a system font, fall back to default if not available
-                try:
-                    self.font = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf", 8)
-                except IOError:
-                    self.font = ImageFont.load_default()
-        except Exception as e:
-            print(f"Font error: {e}")
-            self.font = ImageFont.load_default()
+        # Check if we should use the custom pixel font
+        if self.use_custom_pixel_font:
+            print("Using custom pixel font")
+            self.font = CustomPixelFont()
+        else:
+            # Load a font
+            try:
+                if self.font_path:
+                    self.font = ImageFont.truetype(self.font_path, 8)
+                else:
+                    # Try to load a system font, fall back to default if not available
+                    try:
+                        self.font = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf", 8)
+                    except IOError:
+                        self.font = ImageFont.load_default()
+            except Exception as e:
+                print(f"Font error: {e}")
+                self.font = ImageFont.load_default()
     
     def update_text_image(self):
         """Update the text image based on the current text buffer."""
@@ -309,13 +314,26 @@ class RainbowPipeScroller:
             
         # Measure the size of our text
         try:
-            # For newer PIL versions
-            left, top, right, bottom = self.font.getbbox(self.text_buffer)
-            self.text_width = right - left
-            self.text_height = bottom - top
-        except AttributeError:
-            # Fallback for older PIL versions
-            self.text_width, self.text_height = self.font.getsize(self.text_buffer)
+            if isinstance(self.font, CustomPixelFont):
+                # Use our custom pixel font methods
+                left, top, right, bottom = self.font.getbbox(self.text_buffer)
+                self.text_width = right - left
+                self.text_height = bottom - top
+            else:
+                # For PIL fonts
+                try:
+                    # For newer PIL versions
+                    left, top, right, bottom = self.font.getbbox(self.text_buffer)
+                    self.text_width = right - left
+                    self.text_height = bottom - top
+                except AttributeError:
+                    # Fallback for older PIL versions
+                    self.text_width, self.text_height = self.font.getsize(self.text_buffer)
+        except Exception as e:
+            print(f"Error measuring text: {e}")
+            # Fallback values
+            self.text_width = len(self.text_buffer) * 5
+            self.text_height = 5
         
         # Create a buffer that's the size needed for the text
         self.text_image = Image.new("RGB", (max(1, self.text_width), self.height), (0, 0, 0))
@@ -323,7 +341,13 @@ class RainbowPipeScroller:
         
         # Draw the text in the buffer
         y_position = self.baseline_y - self.text_height // 2
-        draw.text((0, y_position), self.text_buffer, font=self.font, fill=(255, 255, 255))
+        
+        if isinstance(self.font, CustomPixelFont):
+            # Use our custom pixel font renderer
+            self.font.render_text(draw, self.text_buffer, (0, y_position), (255, 255, 255))
+        else:
+            # Use PIL's text rendering with pixel-perfect mode
+            draw.text((0, y_position), self.text_buffer, font=self.font, fill=(255, 255, 255))
         
         # In livefeed mode, reset the scroll position when text is updated
         if self.livefeed_mode:
@@ -599,6 +623,507 @@ def main():
     )
     
     scroller.run()
+
+
+def create_pixel_bitmap_font():
+    """Create a basic 5x3 pixel bitmap font that works well on small displays.
+    
+    Returns:
+        A dictionary mapping characters to their bitmap representations.
+    """
+    # Define a minimal 5x3 pixel font (height x width)
+    # 1 means pixel on, 0 means pixel off
+    font = {
+        'A': [
+            [0, 1, 0],
+            [1, 0, 1],
+            [1, 1, 1],
+            [1, 0, 1],
+            [1, 0, 1]
+        ],
+        'B': [
+            [1, 1, 0],
+            [1, 0, 1],
+            [1, 1, 0],
+            [1, 0, 1],
+            [1, 1, 0]
+        ],
+        'C': [
+            [0, 1, 1],
+            [1, 0, 0],
+            [1, 0, 0],
+            [1, 0, 0],
+            [0, 1, 1]
+        ],
+        'D': [
+            [1, 1, 0],
+            [1, 0, 1],
+            [1, 0, 1],
+            [1, 0, 1],
+            [1, 1, 0]
+        ],
+        'E': [
+            [1, 1, 1],
+            [1, 0, 0],
+            [1, 1, 0],
+            [1, 0, 0],
+            [1, 1, 1]
+        ],
+        'F': [
+            [1, 1, 1],
+            [1, 0, 0],
+            [1, 1, 0],
+            [1, 0, 0],
+            [1, 0, 0]
+        ],
+        'G': [
+            [0, 1, 1],
+            [1, 0, 0],
+            [1, 0, 1],
+            [1, 0, 1],
+            [0, 1, 1]
+        ],
+        'H': [
+            [1, 0, 1],
+            [1, 0, 1],
+            [1, 1, 1],
+            [1, 0, 1],
+            [1, 0, 1]
+        ],
+        'I': [
+            [1, 1, 1],
+            [0, 1, 0],
+            [0, 1, 0],
+            [0, 1, 0],
+            [1, 1, 1]
+        ],
+        'J': [
+            [0, 0, 1],
+            [0, 0, 1],
+            [0, 0, 1],
+            [1, 0, 1],
+            [0, 1, 0]
+        ],
+        'K': [
+            [1, 0, 1],
+            [1, 0, 1],
+            [1, 1, 0],
+            [1, 0, 1],
+            [1, 0, 1]
+        ],
+        'L': [
+            [1, 0, 0],
+            [1, 0, 0],
+            [1, 0, 0],
+            [1, 0, 0],
+            [1, 1, 1]
+        ],
+        'M': [
+            [1, 0, 1],
+            [1, 1, 1],
+            [1, 0, 1],
+            [1, 0, 1],
+            [1, 0, 1]
+        ],
+        'N': [
+            [1, 0, 1],
+            [1, 1, 1],
+            [1, 1, 1],
+            [1, 0, 1],
+            [1, 0, 1]
+        ],
+        'O': [
+            [0, 1, 0],
+            [1, 0, 1],
+            [1, 0, 1],
+            [1, 0, 1],
+            [0, 1, 0]
+        ],
+        'P': [
+            [1, 1, 0],
+            [1, 0, 1],
+            [1, 1, 0],
+            [1, 0, 0],
+            [1, 0, 0]
+        ],
+        'Q': [
+            [0, 1, 0],
+            [1, 0, 1],
+            [1, 0, 1],
+            [1, 0, 1],
+            [0, 1, 1]
+        ],
+        'R': [
+            [1, 1, 0],
+            [1, 0, 1],
+            [1, 1, 0],
+            [1, 0, 1],
+            [1, 0, 1]
+        ],
+        'S': [
+            [0, 1, 1],
+            [1, 0, 0],
+            [0, 1, 0],
+            [0, 0, 1],
+            [1, 1, 0]
+        ],
+        'T': [
+            [1, 1, 1],
+            [0, 1, 0],
+            [0, 1, 0],
+            [0, 1, 0],
+            [0, 1, 0]
+        ],
+        'U': [
+            [1, 0, 1],
+            [1, 0, 1],
+            [1, 0, 1],
+            [1, 0, 1],
+            [0, 1, 0]
+        ],
+        'V': [
+            [1, 0, 1],
+            [1, 0, 1],
+            [1, 0, 1],
+            [0, 1, 0],
+            [0, 1, 0]
+        ],
+        'W': [
+            [1, 0, 1],
+            [1, 0, 1],
+            [1, 0, 1],
+            [1, 1, 1],
+            [1, 0, 1]
+        ],
+        'X': [
+            [1, 0, 1],
+            [1, 0, 1],
+            [0, 1, 0],
+            [1, 0, 1],
+            [1, 0, 1]
+        ],
+        'Y': [
+            [1, 0, 1],
+            [1, 0, 1],
+            [0, 1, 0],
+            [0, 1, 0],
+            [0, 1, 0]
+        ],
+        'Z': [
+            [1, 1, 1],
+            [0, 0, 1],
+            [0, 1, 0],
+            [1, 0, 0],
+            [1, 1, 1]
+        ],
+        '0': [
+            [0, 1, 0],
+            [1, 0, 1],
+            [1, 0, 1],
+            [1, 0, 1],
+            [0, 1, 0]
+        ],
+        '1': [
+            [0, 1, 0],
+            [1, 1, 0],
+            [0, 1, 0],
+            [0, 1, 0],
+            [1, 1, 1]
+        ],
+        '2': [
+            [1, 1, 0],
+            [0, 0, 1],
+            [0, 1, 0],
+            [1, 0, 0],
+            [1, 1, 1]
+        ],
+        '3': [
+            [1, 1, 0],
+            [0, 0, 1],
+            [0, 1, 0],
+            [0, 0, 1],
+            [1, 1, 0]
+        ],
+        '4': [
+            [1, 0, 1],
+            [1, 0, 1],
+            [1, 1, 1],
+            [0, 0, 1],
+            [0, 0, 1]
+        ],
+        '5': [
+            [1, 1, 1],
+            [1, 0, 0],
+            [1, 1, 0],
+            [0, 0, 1],
+            [1, 1, 0]
+        ],
+        '6': [
+            [0, 1, 1],
+            [1, 0, 0],
+            [1, 1, 0],
+            [1, 0, 1],
+            [0, 1, 0]
+        ],
+        '7': [
+            [1, 1, 1],
+            [0, 0, 1],
+            [0, 1, 0],
+            [0, 1, 0],
+            [0, 1, 0]
+        ],
+        '8': [
+            [0, 1, 0],
+            [1, 0, 1],
+            [0, 1, 0],
+            [1, 0, 1],
+            [0, 1, 0]
+        ],
+        '9': [
+            [0, 1, 0],
+            [1, 0, 1],
+            [0, 1, 1],
+            [0, 0, 1],
+            [0, 1, 0]
+        ],
+        ' ': [
+            [0, 0, 0],
+            [0, 0, 0],
+            [0, 0, 0],
+            [0, 0, 0],
+            [0, 0, 0]
+        ],
+        '.': [
+            [0, 0, 0],
+            [0, 0, 0],
+            [0, 0, 0],
+            [0, 0, 0],
+            [0, 1, 0]
+        ],
+        ',': [
+            [0, 0, 0],
+            [0, 0, 0],
+            [0, 0, 0],
+            [0, 1, 0],
+            [1, 0, 0]
+        ],
+        '!': [
+            [0, 1, 0],
+            [0, 1, 0],
+            [0, 1, 0],
+            [0, 0, 0],
+            [0, 1, 0]
+        ],
+        '?': [
+            [1, 1, 0],
+            [0, 0, 1],
+            [0, 1, 0],
+            [0, 0, 0],
+            [0, 1, 0]
+        ],
+        ':': [
+            [0, 0, 0],
+            [0, 1, 0],
+            [0, 0, 0],
+            [0, 1, 0],
+            [0, 0, 0]
+        ],
+        ';': [
+            [0, 0, 0],
+            [0, 1, 0],
+            [0, 0, 0],
+            [0, 1, 0],
+            [1, 0, 0]
+        ],
+        '-': [
+            [0, 0, 0],
+            [0, 0, 0],
+            [1, 1, 1],
+            [0, 0, 0],
+            [0, 0, 0]
+        ],
+        '+': [
+            [0, 0, 0],
+            [0, 1, 0],
+            [1, 1, 1],
+            [0, 1, 0],
+            [0, 0, 0]
+        ],
+        '*': [
+            [0, 0, 0],
+            [1, 0, 1],
+            [0, 1, 0],
+            [1, 0, 1],
+            [0, 0, 0]
+        ],
+        '/': [
+            [0, 0, 1],
+            [0, 0, 1],
+            [0, 1, 0],
+            [1, 0, 0],
+            [1, 0, 0]
+        ],
+        '\\': [
+            [1, 0, 0],
+            [1, 0, 0],
+            [0, 1, 0],
+            [0, 0, 1],
+            [0, 0, 1]
+        ],
+        '_': [
+            [0, 0, 0],
+            [0, 0, 0],
+            [0, 0, 0],
+            [0, 0, 0],
+            [1, 1, 1]
+        ],
+        '=': [
+            [0, 0, 0],
+            [1, 1, 1],
+            [0, 0, 0],
+            [1, 1, 1],
+            [0, 0, 0]
+        ],
+        '(': [
+            [0, 1, 0],
+            [1, 0, 0],
+            [1, 0, 0],
+            [1, 0, 0],
+            [0, 1, 0]
+        ],
+        ')': [
+            [0, 1, 0],
+            [0, 0, 1],
+            [0, 0, 1],
+            [0, 0, 1],
+            [0, 1, 0]
+        ],
+        '[': [
+            [1, 1, 0],
+            [1, 0, 0],
+            [1, 0, 0],
+            [1, 0, 0],
+            [1, 1, 0]
+        ],
+        ']': [
+            [0, 1, 1],
+            [0, 0, 1],
+            [0, 0, 1],
+            [0, 0, 1],
+            [0, 1, 1]
+        ],
+        '{': [
+            [0, 1, 1],
+            [0, 1, 0],
+            [1, 0, 0],
+            [0, 1, 0],
+            [0, 1, 1]
+        ],
+        '}': [
+            [1, 1, 0],
+            [0, 1, 0],
+            [0, 0, 1],
+            [0, 1, 0],
+            [1, 1, 0]
+        ],
+        '<': [
+            [0, 0, 1],
+            [0, 1, 0],
+            [1, 0, 0],
+            [0, 1, 0],
+            [0, 0, 1]
+        ],
+        '>': [
+            [1, 0, 0],
+            [0, 1, 0],
+            [0, 0, 1],
+            [0, 1, 0],
+            [1, 0, 0]
+        ],
+        '|': [
+            [0, 1, 0],
+            [0, 1, 0],
+            [0, 1, 0],
+            [0, 1, 0],
+            [0, 1, 0]
+        ],
+        '^': [
+            [0, 1, 0],
+            [1, 0, 1],
+            [0, 0, 0],
+            [0, 0, 0],
+            [0, 0, 0]
+        ],
+        '&': [
+            [0, 1, 0],
+            [1, 0, 1],
+            [0, 1, 0],
+            [1, 0, 1],
+            [0, 1, 1]
+        ],
+        '@': [
+            [0, 1, 0],
+            [1, 0, 1],
+            [1, 1, 1],
+            [1, 0, 0],
+            [0, 1, 1]
+        ],
+        '#': [
+            [1, 0, 1],
+            [1, 1, 1],
+            [1, 0, 1],
+            [1, 1, 1],
+            [1, 0, 1]
+        ],
+        '%': [
+            [1, 0, 1],
+            [0, 0, 1],
+            [0, 1, 0],
+            [1, 0, 0],
+            [1, 0, 1]
+        ],
+        '~': [
+            [0, 0, 0],
+            [0, 1, 0],
+            [1, 0, 1],
+            [0, 0, 0],
+            [0, 0, 0]
+        ],
+        '`': [
+            [1, 0, 0],
+            [0, 1, 0],
+            [0, 0, 0],
+            [0, 0, 0],
+            [0, 0, 0]
+        ],
+        "'": [
+            [0, 1, 0],
+            [0, 1, 0],
+            [0, 0, 0],
+            [0, 0, 0],
+            [0, 0, 0]
+        ],
+        '"': [
+            [1, 0, 1],
+            [1, 0, 1],
+            [0, 0, 0],
+            [0, 0, 0],
+            [0, 0, 0]
+        ],
+        '•': [
+            [0, 0, 0],
+            [0, 1, 0],
+            [1, 1, 1],
+            [0, 1, 0],
+            [0, 0, 0]
+        ]
+    }
+    
+    # Add lowercase letters (same as uppercase for simplicity)
+    for char in list('abcdefghijklmnopqrstuvwxyz'):
+        font[char] = font[char.upper()]
+        
+    return font
 
 
 if __name__ == "__main__":
